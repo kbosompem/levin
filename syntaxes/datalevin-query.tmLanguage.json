@@ -1,0 +1,87 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Datalevin Query",
+  "scopeName": "source.datalevin",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#keyword" },
+    { "include": "#query-keyword" },
+    { "include": "#logic-variable" },
+    { "include": "#attribute" },
+    { "include": "#builtin-function" },
+    { "include": "#number" },
+    { "include": "#boolean" },
+    { "include": "#nil" },
+    { "include": "#brackets" }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        {
+          "name": "comment.line.semicolon.datalevin",
+          "match": ";;.*$"
+        }
+      ]
+    },
+    "string": {
+      "name": "string.quoted.double.datalevin",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.datalevin",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "keyword": {
+      "name": "constant.other.keyword.datalevin",
+      "match": ":[a-zA-Z][a-zA-Z0-9\\-_]*(\\.[a-zA-Z][a-zA-Z0-9\\-_]*)?"
+    },
+    "query-keyword": {
+      "name": "keyword.control.datalevin",
+      "match": ":(find|where|in|keys|strs|syms|with|or|or-join|and|not|not-join|pull|args|limit|db|query)\\b"
+    },
+    "logic-variable": {
+      "name": "variable.other.datalevin",
+      "match": "\\?[a-zA-Z][a-zA-Z0-9\\-_]*"
+    },
+    "attribute": {
+      "name": "entity.name.tag.datalevin",
+      "match": ":[a-zA-Z][a-zA-Z0-9\\-_]*/[a-zA-Z][a-zA-Z0-9\\-_]*"
+    },
+    "builtin-function": {
+      "name": "support.function.datalevin",
+      "match": "\\b(count|sum|min|max|avg|distinct|sample|rand|pull|pull-many|get-else|get-some|ground|missing\\?|tuple|untuple|<|>|<=|>=|=|not=|\\+|\\-|\\*|/)\\b"
+    },
+    "number": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.datalevin",
+          "match": "-?\\d+\\.\\d+([eE][+-]?\\d+)?M?"
+        },
+        {
+          "name": "constant.numeric.integer.datalevin",
+          "match": "-?\\d+N?"
+        }
+      ]
+    },
+    "boolean": {
+      "name": "constant.language.boolean.datalevin",
+      "match": "\\b(true|false)\\b"
+    },
+    "nil": {
+      "name": "constant.language.nil.datalevin",
+      "match": "\\bnil\\b"
+    },
+    "brackets": {
+      "patterns": [
+        {
+          "name": "punctuation.section.brackets.datalevin",
+          "match": "[\\[\\]{}()]"
+        }
+      ]
+    }
+  }
+}

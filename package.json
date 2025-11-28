@@ -1,0 +1,243 @@
+{
+  "name": "levin",
+  "displayName": "Levin",
+  "description": "Browse, query, and manage Datalevin in VS Code",
+  "version": "0.1.0",
+  "publisher": "KayBosompem",
+  "author": {
+    "name": "Kay Bosompem"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kbosompem/levin"
+  },
+  "bugs": {
+    "url": "https://github.com/kbosompem/levin/issues"
+  },
+  "homepage": "https://github.com/kbosompem/levin#readme",
+  "icon": "resources/icons/levin-128.png",
+  "galleryBanner": {
+    "color": "#2C3E50",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Data Science",
+    "Other"
+  ],
+  "keywords": [
+    "datalevin",
+    "datalog",
+    "clojure",
+    "database",
+    "datomic",
+    "calva",
+    "edn"
+  ],
+  "extensionDependencies": [
+    "betterthantomorrow.calva"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/.env",
+    "onLanguage:clojure",
+    "onCommand:levin.jackIn"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "levin.jackIn",
+        "title": "Levin: Jack In",
+        "icon": "$(database)"
+      },
+      {
+        "command": "levin.newQuery",
+        "title": "Levin: New Query"
+      },
+      {
+        "command": "levin.runQuery",
+        "title": "Levin: Run Query"
+      },
+      {
+        "command": "levin.showEntity",
+        "title": "Levin: Inspect Entity"
+      },
+      {
+        "command": "levin.refreshExplorer",
+        "title": "Levin: Refresh Explorer"
+      },
+      {
+        "command": "levin.exportResults",
+        "title": "Levin: Export Results"
+      },
+      {
+        "command": "levin.disconnect",
+        "title": "Levin: Disconnect Database"
+      },
+      {
+        "command": "levin.addDatabase",
+        "title": "Levin: Add Database"
+      },
+      {
+        "command": "levin.createDatabase",
+        "title": "Levin: Create New Database"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "levin-explorer",
+          "title": "Levin",
+          "icon": "resources/icons/levin.svg"
+        }
+      ]
+    },
+    "views": {
+      "levin-explorer": [
+        {
+          "id": "levin.databases",
+          "name": "Databases"
+        },
+        {
+          "id": "levin.savedQueries",
+          "name": "Saved Queries"
+        },
+        {
+          "id": "levin.history",
+          "name": "Query History"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "levin.jackIn",
+          "when": "view == levin.databases",
+          "group": "navigation"
+        },
+        {
+          "command": "levin.refreshExplorer",
+          "when": "view == levin.databases",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "levin.newQuery",
+          "when": "viewItem == database",
+          "group": "inline"
+        },
+        {
+          "command": "levin.disconnect",
+          "when": "viewItem == database"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "levin.jackIn",
+        "key": "ctrl+alt+l j",
+        "mac": "cmd+alt+l j"
+      },
+      {
+        "command": "levin.newQuery",
+        "key": "ctrl+alt+l q",
+        "mac": "cmd+alt+l q"
+      },
+      {
+        "command": "levin.runQuery",
+        "key": "ctrl+enter",
+        "when": "editorLangId == datalevin-query"
+      },
+      {
+        "command": "levin.refreshExplorer",
+        "key": "ctrl+alt+l r",
+        "mac": "cmd+alt+l r"
+      }
+    ],
+    "languages": [
+      {
+        "id": "datalevin-query",
+        "aliases": [
+          "Datalevin Query",
+          "dtlv"
+        ],
+        "extensions": [
+          ".dtlv.edn"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "datalevin-query",
+        "scopeName": "source.datalevin",
+        "path": "./syntaxes/datalevin-query.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Levin",
+      "properties": {
+        "levin.envFile": {
+          "type": "string",
+          "default": ".env",
+          "description": "Path to .env file containing DATALEVIN_DBS"
+        },
+        "levin.autoJackIn": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically prompt to jack-in when .env with DATALEVIN_DBS found"
+        },
+        "levin.queryHistorySize": {
+          "type": "number",
+          "default": 100,
+          "description": "Number of queries to keep in history"
+        },
+        "levin.resultPageSize": {
+          "type": "number",
+          "default": 50,
+          "description": "Default page size for query results"
+        },
+        "levin.datalevinVersion": {
+          "type": "string",
+          "default": "0.9.12",
+          "description": "Datalevin version to inject on jack-in"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "publish:ovsx": "ovsx publish"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vscode/test-electron": "^2.3.8",
+    "@vscode/vsce": "^2.22.0",
+    "canvas": "^3.2.0",
+    "eslint": "^8.55.0",
+    "glob": "^10.3.10",
+    "mocha": "^10.2.0",
+    "ovsx": "^0.8.3",
+    "typescript": "^5.3.2"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "edn-data": "^1.1.2"
+  }
+}
