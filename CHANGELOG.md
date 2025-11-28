@@ -5,6 +5,15 @@ All notable changes to the Levin extension will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2024-11-28
+
+### Fixed
+
+- Fix path quoting when executing dtlv CLI commands
+- Paths containing `/` are now properly quoted to prevent parsing errors
+
+---
+
 ## [0.2.0] - 2024-11-28
 
 ### Changed

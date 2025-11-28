@@ -356,7 +356,18 @@ export class DtlvBridge {
             let stdout = '';
             let stderr = '';
 
-            const proc = spawn(this.dtlvPath, args, {
+            // Quote arguments that contain paths or code
+            const quotedArgs = args.map((arg, index) => {
+                // First arg is the command (exec, stat, etc), don't quote
+                if (index === 0) { return arg; }
+                // Quote paths and code
+                if (arg.includes('/') || arg.includes(' ') || arg.startsWith('(') || arg.startsWith('[') || arg.startsWith('{')) {
+                    return `"${arg.replace(/"/g, '\\"')}"`;
+                }
+                return arg;
+            });
+
+            const proc = spawn(this.dtlvPath, quotedArgs, {
                 shell: true,
                 env: { ...process.env }
             });
@@ -410,7 +421,15 @@ export class DtlvBridge {
      * Execute dtlv command synchronously
      */
     private execDtlvSync(args: string[]): string {
-        return execSync(`${this.dtlvPath} ${args.join(' ')}`, {
+        // Quote arguments that contain paths
+        const quotedArgs = args.map((arg, index) => {
+            if (index === 0) { return arg; }
+            if (arg.includes('/') || arg.includes(' ')) {
+                return `"${arg.replace(/"/g, '\\"')}"`;
+            }
+            return arg;
+        });
+        return execSync(`${this.dtlvPath} ${quotedArgs.join(' ')}`, {
             encoding: 'utf8',
             stdio: 'pipe'
         });
