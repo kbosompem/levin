@@ -192,7 +192,7 @@ export class CalvaBridge {
             // Try to check if there's an active REPL session
             // This uses Calva's internal state
             const replSession = this.calvaApi?.repl?.session;
-            return replSession !== null;
+            return replSession !== null && replSession !== undefined;
         } catch {
             return false;
         }

@@ -178,6 +178,19 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Add Database command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.addDatabase', async () => {
+            // Check REPL connection first
+            const isConnected = await calvaBridge.isConnected();
+            if (!isConnected) {
+                const action = await vscode.window.showErrorMessage(
+                    'No REPL connection. You need to Jack In first.',
+                    'Jack In'
+                );
+                if (action === 'Jack In') {
+                    await handleJackIn();
+                }
+                return;
+            }
+
             const path = await vscode.window.showInputBox({
                 prompt: 'Enter database path',
                 placeHolder: '/path/to/database'
@@ -188,11 +201,15 @@ function registerCommands(context: vscode.ExtensionContext): void {
                     placeHolder: 'my-database'
                 });
                 if (name) {
-                    await calvaBridge.evaluate(
+                    const result = await calvaBridge.evaluate(
                         `(datalevin-ext.core/connect-db! "${name}" "${path}")`
                     );
-                    databaseTreeProvider.refresh();
-                    vscode.window.showInformationMessage(`Connected to ${name}`);
+                    if (result.success) {
+                        databaseTreeProvider.refresh();
+                        vscode.window.showInformationMessage(`Connected to ${name}`);
+                    } else {
+                        vscode.window.showErrorMessage(`Failed to connect: ${result.error}`);
+                    }
                 }
             }
         })
@@ -201,6 +218,19 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Create Database command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.createDatabase', async () => {
+            // Check REPL connection first
+            const isConnected = await calvaBridge.isConnected();
+            if (!isConnected) {
+                const action = await vscode.window.showErrorMessage(
+                    'No REPL connection. You need to Jack In first.',
+                    'Jack In'
+                );
+                if (action === 'Jack In') {
+                    await handleJackIn();
+                }
+                return;
+            }
+
             const path = await vscode.window.showInputBox({
                 prompt: 'Enter path for new database',
                 placeHolder: '/path/to/new-database'
@@ -211,11 +241,15 @@ function registerCommands(context: vscode.ExtensionContext): void {
                     placeHolder: 'new-database'
                 });
                 if (name) {
-                    await calvaBridge.evaluate(
+                    const result = await calvaBridge.evaluate(
                         `(datalevin-ext.core/connect-db! "${name}" "${path}" :create? true)`
                     );
-                    databaseTreeProvider.refresh();
-                    vscode.window.showInformationMessage(`Created database ${name}`);
+                    if (result.success) {
+                        databaseTreeProvider.refresh();
+                        vscode.window.showInformationMessage(`Created database ${name}`);
+                    } else {
+                        vscode.window.showErrorMessage(`Failed to create database: ${result.error}`);
+                    }
                 }
             }
         })
