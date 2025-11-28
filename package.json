@@ -2,7 +2,7 @@
   "name": "levin",
   "displayName": "Levin",
   "description": "Browse, query, and manage Datalevin databases in VS Code",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "KayBosompem",
   "author": {
     "name": "Kay Bosompem"
@@ -78,6 +78,14 @@
       {
         "command": "levin.copyPath",
         "title": "Copy Path"
+      },
+      {
+        "command": "levin.editSchema",
+        "title": "Levin: Edit Schema"
+      },
+      {
+        "command": "levin.showTransactionPanel",
+        "title": "Levin: Open Transaction Panel"
       }
     ],
     "viewsContainers": {
@@ -122,15 +130,27 @@
         {
           "command": "levin.newQuery",
           "when": "viewItem == database",
-          "group": "inline"
+          "group": "navigation"
+        },
+        {
+          "command": "levin.showTransactionPanel",
+          "when": "viewItem == database",
+          "group": "navigation"
+        },
+        {
+          "command": "levin.editSchema",
+          "when": "viewItem == database",
+          "group": "navigation"
         },
         {
           "command": "levin.closeDatabase",
-          "when": "viewItem == database"
+          "when": "viewItem == database",
+          "group": "2_close"
         },
         {
           "command": "levin.copyPath",
-          "when": "viewItem == database"
+          "when": "viewItem == database",
+          "group": "3_copy"
         }
       ]
     },
