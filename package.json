@@ -1,8 +1,8 @@
 {
   "name": "levin",
   "displayName": "Levin",
-  "description": "Browse, query, and manage Datalevin in VS Code",
-  "version": "0.1.0",
+  "description": "Browse, query, and manage Datalevin databases in VS Code",
+  "version": "0.2.0",
   "publisher": "KayBosompem",
   "author": {
     "name": "Kay Bosompem"
@@ -25,34 +25,26 @@
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Programming Languages",
     "Data Science",
     "Other"
   ],
   "keywords": [
     "datalevin",
     "datalog",
-    "clojure",
     "database",
     "datomic",
-    "calva",
     "edn"
   ],
-  "extensionDependencies": [
-    "betterthantomorrow.calva"
-  ],
   "activationEvents": [
-    "workspaceContains:**/.env",
-    "onLanguage:clojure",
-    "onCommand:levin.jackIn"
+    "onView:levin.databases"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "levin.jackIn",
-        "title": "Levin: Jack In",
-        "icon": "$(database)"
+        "command": "levin.openDatabase",
+        "title": "Levin: Open Database",
+        "icon": "$(folder-opened)"
       },
       {
         "command": "levin.newQuery",
@@ -68,23 +60,24 @@
       },
       {
         "command": "levin.refreshExplorer",
-        "title": "Levin: Refresh Explorer"
+        "title": "Levin: Refresh Explorer",
+        "icon": "$(refresh)"
       },
       {
         "command": "levin.exportResults",
         "title": "Levin: Export Results"
       },
       {
-        "command": "levin.disconnect",
-        "title": "Levin: Disconnect Database"
-      },
-      {
-        "command": "levin.addDatabase",
-        "title": "Levin: Add Database"
+        "command": "levin.closeDatabase",
+        "title": "Levin: Close Database"
       },
       {
         "command": "levin.createDatabase",
         "title": "Levin: Create New Database"
+      },
+      {
+        "command": "levin.copyPath",
+        "title": "Copy Path"
       }
     ],
     "viewsContainers": {
@@ -115,7 +108,7 @@
     "menus": {
       "view/title": [
         {
-          "command": "levin.jackIn",
+          "command": "levin.openDatabase",
           "when": "view == levin.databases",
           "group": "navigation"
         },
@@ -132,16 +125,20 @@
           "group": "inline"
         },
         {
-          "command": "levin.disconnect",
+          "command": "levin.closeDatabase",
+          "when": "viewItem == database"
+        },
+        {
+          "command": "levin.copyPath",
           "when": "viewItem == database"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "levin.jackIn",
-        "key": "ctrl+alt+l j",
-        "mac": "cmd+alt+l j"
+        "command": "levin.openDatabase",
+        "key": "ctrl+alt+l o",
+        "mac": "cmd+alt+l o"
       },
       {
         "command": "levin.newQuery",
@@ -182,15 +179,10 @@
     "configuration": {
       "title": "Levin",
       "properties": {
-        "levin.envFile": {
+        "levin.dtlvPath": {
           "type": "string",
-          "default": ".env",
-          "description": "Path to .env file containing DATALEVIN_DBS"
-        },
-        "levin.autoJackIn": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically prompt to jack-in when .env with DATALEVIN_DBS found"
+          "default": "dtlv",
+          "description": "Path to dtlv executable (default assumes it's in PATH)"
         },
         "levin.queryHistorySize": {
           "type": "number",
@@ -202,10 +194,10 @@
           "default": 50,
           "description": "Default page size for query results"
         },
-        "levin.datalevinVersion": {
-          "type": "string",
-          "default": "0.9.12",
-          "description": "Datalevin version to inject on jack-in"
+        "levin.recentDatabases": {
+          "type": "array",
+          "default": [],
+          "description": "Recently opened database paths"
         }
       }
     }
@@ -229,7 +221,6 @@
     "@typescript-eslint/parser": "^6.13.0",
     "@vscode/test-electron": "^2.3.8",
     "@vscode/vsce": "^2.22.0",
-    "canvas": "^3.2.0",
     "eslint": "^8.55.0",
     "glob": "^10.3.10",
     "mocha": "^10.2.0",
@@ -237,7 +228,6 @@
     "typescript": "^5.3.2"
   },
   "dependencies": {
-    "dotenv": "^16.3.1",
     "edn-data": "^1.1.2"
   }
 }

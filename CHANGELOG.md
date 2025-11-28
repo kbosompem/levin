@@ -5,6 +5,36 @@ All notable changes to the Levin extension will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2024-11-28
+
+### Changed
+
+- **Major Architecture Overhaul**: Switched from Calva REPL to direct `dtlv` CLI communication
+  - Removed Calva extension dependency
+  - No longer requires jack-in or REPL connection
+  - Simpler, more straightforward workflow
+
+### Added
+
+- `Levin: Open Database` command - Open databases via folder picker
+- `Levin: Create Database` command - Create new databases with one click
+- `Levin: Close Database` command - Close open databases
+- `levin.dtlvPath` setting - Customize path to dtlv executable
+- Auto-load recently opened databases on startup
+- Recent databases stored in settings
+
+### Removed
+
+- `Levin: Jack In` command - No longer needed
+- Calva extension dependency
+- Bootstrap Clojure code injection
+
+### Dependencies
+
+- Now requires only `dtlv` CLI (Datalevin command-line tool)
+
+---
+
 ## [0.1.0] - 2024-11-28
 
 ### Added

@@ -2,15 +2,16 @@
 
 > Browse, query, and manage Datalevin databases in VS Code
 
-**Levin** (meaning "lightning" in German) is a VS Code extension that provides a visual interface for [Datalevin](https://github.com/juji-io/datalevin) databases. It leverages [Calva](https://calva.io) for all Clojure/REPL interactions, giving you a powerful database explorer right in your editor.
+**Levin** (meaning "lightning" in German) is a VS Code extension that provides a visual interface for [Datalevin](https://github.com/juji-io/datalevin) databases. It communicates directly with the `dtlv` CLI, requiring no REPL or Clojure setup.
 
 ## Features
 
 ### Database Explorer
-- Auto-discover databases via `.env` configuration
+- Open databases directly via folder picker
 - Browse schema attributes with type information
 - View entity counts by namespace
 - Navigate database structure in the sidebar
+- Auto-load recently opened databases
 
 ### Query Editor
 - Dedicated `.dtlv.edn` file support for Datalevin queries
@@ -42,31 +43,33 @@
 
 ## Requirements
 
-- **Calva extension** - Levin requires Calva for REPL connectivity
-- **Datalevin** - The Datalevin library must be available in your REPL
+- **Datalevin CLI (`dtlv`)** - Install Datalevin and ensure `dtlv` is in your PATH
+  - Via Homebrew: `brew install datalevin`
+  - Or download from [Datalevin releases](https://github.com/juji-io/datalevin/releases)
 
 ## Quick Start
 
 1. Install the Levin extension
-2. Create a `.env` file in your workspace root:
-
-```env
-# Datalevin database paths (semicolon-separated for multiple)
-DATALEVIN_DBS=/path/to/db1;/path/to/db2
-
-# Optional: Default database
-DATALEVIN_DEFAULT_DB=/path/to/db1
-```
-
+2. Ensure `dtlv` CLI is installed and in your PATH
 3. Open the Levin sidebar (lightning bolt icon)
-4. Click "Jack In" or use `Cmd+Alt+L J` (Mac) / `Ctrl+Alt+L J` (Windows/Linux)
-5. Start exploring your databases!
+4. Click "Open Database" or use `Cmd+Alt+L O` (Mac) / `Ctrl+Alt+L O` (Windows/Linux)
+5. Select a Datalevin database folder
+6. Start exploring!
+
+### Creating a New Database
+
+1. Click "Create Database" in the sidebar or use `Cmd+Alt+L C`
+2. Enter the database name
+3. Select the parent folder
+4. The new database is created and opened automatically
 
 ## Commands
 
 | Command | Keybinding | Description |
 |---------|------------|-------------|
-| `Levin: Jack In` | `Cmd+Alt+L J` | Connect to Datalevin with REPL |
+| `Levin: Open Database` | `Cmd+Alt+L O` | Open an existing database |
+| `Levin: Create Database` | `Cmd+Alt+L C` | Create a new database |
+| `Levin: Close Database` | `Cmd+Alt+L D` | Close a database |
 | `Levin: New Query` | `Cmd+Alt+L Q` | Open new query editor |
 | `Levin: Run Query` | `Ctrl+Enter` | Execute query under cursor |
 | `Levin: Inspect Entity` | `Cmd+Alt+L E` | Inspect entity by ID |
@@ -78,7 +81,7 @@ DATALEVIN_DEFAULT_DB=/path/to/db1
 Create `.dtlv.edn` files for your queries:
 
 ```clojure
-{:db "myapp-db"
+{:db "/path/to/database"
  :query [:find ?e ?name ?email
          :where
          [?e :user/name ?name]
@@ -91,13 +94,19 @@ Create `.dtlv.edn` files for your queries:
 
 ```json
 {
-  "levin.envFile": ".env",
-  "levin.autoJackIn": true,
+  "levin.dtlvPath": "dtlv",
   "levin.queryHistorySize": 100,
   "levin.resultPageSize": 50,
-  "levin.datalevinVersion": "0.9.12"
+  "levin.recentDatabases": []
 }
 ```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `levin.dtlvPath` | `"dtlv"` | Path to dtlv executable |
+| `levin.queryHistorySize` | `100` | Number of queries to keep in history |
+| `levin.resultPageSize` | `50` | Results per page in table view |
+| `levin.recentDatabases` | `[]` | Auto-populated list of recent databases |
 
 ## Development
 
@@ -122,13 +131,12 @@ npm run package
 
 ## Architecture
 
-Levin follows a thin-client architecture:
+Levin v0.2.0 uses a simple CLI-based architecture:
 
-1. **Zero custom Clojure runtime** - All database operations execute through Calva's REPL connection
-2. **Convention-based discovery** - `.env` file defines database paths
-3. **Local-only** - Direct filesystem access via REPL, no HTTP
-
-The extension injects bootstrap Clojure code on jack-in that provides all database operations.
+1. **Direct CLI communication** - All database operations execute through the `dtlv` command-line tool
+2. **No REPL required** - No need for Clojure, Calva, or jack-in workflows
+3. **Local-only** - Direct filesystem access, no HTTP servers
+4. **Stateless** - Each operation is independent
 
 ## License
 
@@ -139,7 +147,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [Repository](https://github.com/kbosompem/levin)
 - [Issues](https://github.com/kbosompem/levin/issues)
 - [Datalevin](https://github.com/juji-io/datalevin)
-- [Calva](https://calva.io)
 
 ---
 

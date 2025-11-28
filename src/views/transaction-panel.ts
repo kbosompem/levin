@@ -1,30 +1,23 @@
 import * as vscode from 'vscode';
-import { CalvaBridge } from '../calva-bridge';
-
-interface TransactionResult {
-    txId?: number;
-    tempids?: Record<string, number>;
-    datomsCount?: number;
-    error?: string;
-}
+import { DtlvBridge, QueryResult } from '../dtlv-bridge';
 
 export class TransactionPanel {
     private panel: vscode.WebviewPanel | undefined;
-    private currentDbName: string = '';
-    private lastResult: TransactionResult | undefined;
+    private currentDbPath: string = '';
+    private lastResult: QueryResult | undefined;
 
     constructor(
-        private context: vscode.ExtensionContext,
-        private calvaBridge: CalvaBridge
+        private _context: vscode.ExtensionContext,
+        private dtlvBridge: DtlvBridge
     ) {}
 
-    async show(dbName: string): Promise<void> {
-        this.currentDbName = dbName;
+    async show(dbPath: string): Promise<void> {
+        this.currentDbPath = dbPath;
 
         if (!this.panel) {
             this.panel = vscode.window.createWebviewPanel(
                 'levinTransaction',
-                `Transaction: ${dbName}`,
+                `Transaction: ${dbPath.split('/').pop()}`,
                 vscode.ViewColumn.Active,
                 {
                     enableScripts: true,
@@ -41,7 +34,7 @@ export class TransactionPanel {
                 undefined
             );
         } else {
-            this.panel.title = `Transaction: ${dbName}`;
+            this.panel.title = `Transaction: ${dbPath.split('/').pop()}`;
         }
 
         this.updateContent();
@@ -52,68 +45,35 @@ export class TransactionPanel {
             case 'transact':
                 await this.executeTransaction(message.txData as string);
                 break;
-            case 'validate':
-                await this.validateTransaction(message.txData as string);
-                break;
         }
     }
 
     private async executeTransaction(txData: string): Promise<void> {
         try {
-            const result = await this.calvaBridge.evaluate(
-                `(datalevin-ext.core/transact! "${this.currentDbName}" "${txData.replace(/"/g, '\\"')}")`
-            );
+            const result = await this.dtlvBridge.transact(this.currentDbPath, txData);
+            this.lastResult = result;
 
             if (result.success) {
-                this.lastResult = result.value as TransactionResult;
-
-                if (this.lastResult.error) {
-                    vscode.window.showErrorMessage(`Transaction error: ${this.lastResult.error}`);
-                } else {
-                    vscode.window.showInformationMessage(
-                        `Transaction successful. TX ID: ${this.lastResult.txId}, ` +
-                        `${this.lastResult.datomsCount} datoms added.`
-                    );
-                    // Refresh explorer to show new data
-                    vscode.commands.executeCommand('levin.refreshExplorer');
-                }
+                const data = result.data as { txId?: number; datomsCount?: number };
+                vscode.window.showInformationMessage(
+                    `Transaction successful. TX ID: ${data.txId}, ${data.datomsCount} datoms added.`
+                );
+                vscode.commands.executeCommand('levin.refreshExplorer');
             } else {
-                this.lastResult = { error: result.error };
                 vscode.window.showErrorMessage(`Transaction failed: ${result.error}`);
             }
 
             this.updateContent();
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            this.lastResult = { error: errorMessage };
+            this.lastResult = { success: false, error: errorMessage };
             vscode.window.showErrorMessage(`Transaction failed: ${errorMessage}`);
             this.updateContent();
         }
     }
 
-    private async validateTransaction(txData: string): Promise<void> {
-        try {
-            // Try to parse the EDN to validate syntax
-            const result = await this.calvaBridge.evaluate(
-                `(clojure.edn/read-string "${txData.replace(/"/g, '\\"')}")`
-            );
-
-            if (result.success) {
-                vscode.window.showInformationMessage('Transaction data is valid EDN');
-            } else {
-                vscode.window.showErrorMessage(`Invalid EDN: ${result.error}`);
-            }
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(`Validation error: ${errorMessage}`);
-        }
-    }
-
     private updateContent(): void {
-        if (!this.panel) {
-            return;
-        }
-
+        if (!this.panel) { return; }
         this.panel.webview.html = this.getHtml();
     }
 
@@ -152,14 +112,7 @@ export class TransactionPanel {
             margin-bottom: 16px;
         }
 
-        .header h2 {
-            margin: 0;
-        }
-
-        .actions {
-            display: flex;
-            gap: 8px;
-        }
+        .header h2 { margin: 0; }
 
         button {
             padding: 8px 16px;
@@ -170,15 +123,7 @@ export class TransactionPanel {
             cursor: pointer;
         }
 
-        button:hover {
-            background: var(--vscode-button-hoverBackground);
-        }
-
-        button.secondary {
-            background: var(--header-bg);
-            color: var(--text-color);
-            border: 1px solid var(--border-color);
-        }
+        button:hover { background: var(--vscode-button-hoverBackground); }
 
         textarea {
             width: 100%;
@@ -200,9 +145,7 @@ export class TransactionPanel {
             border-radius: 4px;
         }
 
-        .help h4 {
-            margin: 0 0 8px 0;
-        }
+        .help h4 { margin: 0 0 8px 0; }
 
         .help pre {
             margin: 8px 0;
@@ -231,25 +174,15 @@ export class TransactionPanel {
 </head>
 <body>
     <div class="header">
-        <h2>Transaction: ${this.currentDbName}</h2>
-        <div class="actions">
-            <button class="secondary" onclick="validate()">Validate</button>
-            <button onclick="transact()">Transact</button>
-        </div>
+        <h2>Transaction: ${this.currentDbPath.split('/').pop()}</h2>
+        <button onclick="transact()">Transact</button>
     </div>
 
-    <textarea id="txData" placeholder="Enter transaction data in EDN format...">
+    <textarea id="txData" placeholder="Enter transaction data in EDN format...">[
 ;; Add new entity
 {:user/name "Alice"
  :user/email "alice@example.com"}
-
-;; Update existing entity
-;; {:db/id 42
-;;  :post/title "Updated Title"}
-
-;; Retract attribute
-;; [:db/retract 42 :post/draft true]
-</textarea>
+]</textarea>
 
     ${resultHtml}
 
@@ -257,22 +190,15 @@ export class TransactionPanel {
         <h4>Transaction Examples</h4>
 
         <p><strong>Add new entity:</strong></p>
-        <pre>{:user/name "John"
- :user/email "john@example.com"}</pre>
-
-        <p><strong>Add multiple entities:</strong></p>
-        <pre>[{:user/name "John"}
- {:user/name "Jane"}]</pre>
+        <pre>[{:user/name "John"
+  :user/email "john@example.com"}]</pre>
 
         <p><strong>Update existing entity:</strong></p>
-        <pre>{:db/id 42
- :user/name "Updated Name"}</pre>
+        <pre>[{:db/id 42
+  :user/name "Updated Name"}]</pre>
 
         <p><strong>Retract attribute:</strong></p>
-        <pre>[:db/retract 42 :user/email "old@email.com"]</pre>
-
-        <p><strong>Retract entity:</strong></p>
-        <pre>[:db/retractEntity 42]</pre>
+        <pre>[[:db/retract 42 :user/email "old@email.com"]]</pre>
     </div>
 
     <script>
@@ -285,35 +211,13 @@ export class TransactionPanel {
                 return;
             }
 
-            // Remove comments for processing
+            // Remove comments
             const cleanData = txData
                 .split('\\n')
                 .filter(line => !line.trim().startsWith(';;'))
                 .join('\\n');
 
-            vscode.postMessage({
-                command: 'transact',
-                txData: cleanData
-            });
-        }
-
-        function validate() {
-            const txData = document.getElementById('txData').value.trim();
-            if (!txData) {
-                alert('Please enter transaction data');
-                return;
-            }
-
-            // Remove comments for validation
-            const cleanData = txData
-                .split('\\n')
-                .filter(line => !line.trim().startsWith(';;'))
-                .join('\\n');
-
-            vscode.postMessage({
-                command: 'validate',
-                txData: cleanData
-            });
+            vscode.postMessage({ command: 'transact', txData: cleanData });
         }
     </script>
 </body>
@@ -321,36 +225,27 @@ export class TransactionPanel {
     }
 
     private renderResult(): string {
-        if (!this.lastResult) {
-            return '';
+        if (!this.lastResult) { return ''; }
+
+        if (!this.lastResult.success) {
+            return `<div class="result error">
+                <strong>Error:</strong> ${this.escapeHtml(this.lastResult.error || 'Unknown error')}
+            </div>`;
         }
 
-        if (this.lastResult.error) {
-            return `
-                <div class="result error">
-                    <strong>Error:</strong> ${this.escapeHtml(this.lastResult.error)}
-                </div>
-            `;
-        }
-
-        return `
-            <div class="result success">
-                <strong>Success!</strong><br>
-                Transaction ID: ${this.lastResult.txId}<br>
-                Datoms added: ${this.lastResult.datomsCount}
-                ${this.lastResult.tempids && Object.keys(this.lastResult.tempids).length > 0 ?
-                    `<br>Temp IDs resolved: ${JSON.stringify(this.lastResult.tempids)}` : ''}
-            </div>
-        `;
+        const data = this.lastResult.data as { txId?: number; datomsCount?: number; tempids?: Record<string, number> };
+        return `<div class="result success">
+            <strong>Success!</strong><br>
+            Transaction ID: ${data.txId}<br>
+            Datoms added: ${data.datomsCount}
+            ${data.tempids && Object.keys(data.tempids).length > 0 ?
+                `<br>Temp IDs resolved: ${JSON.stringify(data.tempids)}` : ''}
+        </div>`;
     }
 
     private escapeHtml(str: string): string {
-        return str
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
     }
 
     dispose(): void {

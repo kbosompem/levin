@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { CalvaBridge } from '../calva-bridge';
+import { DtlvBridge } from '../dtlv-bridge';
 import { formatValue } from '../utils/formatters';
 
 interface EntityData {
@@ -10,31 +10,29 @@ interface EntityData {
 export class EntityInspector {
     private panel: vscode.WebviewPanel | undefined;
     private currentEntity: EntityData | undefined;
-    private currentDbName: string = '';
-    private history: Array<{ dbName: string; eid: number }> = [];
+    private currentDbPath: string = '';
+    private history: Array<{ dbPath: string; eid: number }> = [];
 
     constructor(
-        private context: vscode.ExtensionContext,
-        private calvaBridge: CalvaBridge
+        private _context: vscode.ExtensionContext,
+        private dtlvBridge: DtlvBridge
     ) {}
 
-    async show(dbName: string, entityId: number): Promise<void> {
-        this.currentDbName = dbName;
+    async show(dbPath: string, entityId: number): Promise<void> {
+        this.currentDbPath = dbPath;
 
         // Fetch entity data
-        const result = await this.calvaBridge.evaluate(
-            `(datalevin-ext.core/get-entity "${dbName}" ${entityId})`
-        );
+        const result = await this.dtlvBridge.getEntity(dbPath, entityId);
 
         if (!result.success) {
             vscode.window.showErrorMessage(`Failed to load entity: ${result.error}`);
             return;
         }
 
-        this.currentEntity = result.value as EntityData;
+        this.currentEntity = result.data as EntityData;
 
         // Add to history
-        this.history.push({ dbName, eid: entityId });
+        this.history.push({ dbPath, eid: entityId });
         if (this.history.length > 50) {
             this.history.shift();
         }
@@ -62,20 +60,20 @@ export class EntityInspector {
             this.panel.title = `Entity ${entityId}`;
         }
 
-        await this.updateContent();
+        this.updateContent();
     }
 
     private async handleMessage(message: { command: string; [key: string]: unknown }): Promise<void> {
         switch (message.command) {
             case 'navigate':
-                await this.show(this.currentDbName, message.entityId as number);
+                await this.show(this.currentDbPath, message.entityId as number);
                 break;
             case 'back':
                 if (this.history.length > 1) {
                     this.history.pop(); // Remove current
                     const prev = this.history.pop();
                     if (prev) {
-                        await this.show(prev.dbName, prev.eid);
+                        await this.show(prev.dbPath, prev.eid);
                     }
                 }
                 break;
@@ -84,27 +82,21 @@ export class EntityInspector {
                 break;
             case 'refresh':
                 if (this.currentEntity) {
-                    await this.show(this.currentDbName, this.currentEntity.eid);
+                    await this.show(this.currentDbPath, this.currentEntity.eid);
                 }
                 break;
         }
     }
 
-    private async updateContent(): Promise<void> {
+    private updateContent(): void {
         if (!this.panel || !this.currentEntity) {
             return;
         }
 
-        // Get references to this entity
-        const refsResult = await this.calvaBridge.evaluate(
-            `(datalevin-ext.core/get-entity-refs "${this.currentDbName}" ${this.currentEntity.eid})`
-        );
-        const refs = refsResult.success ? (refsResult.value as Array<[string, number]>) : [];
-
-        this.panel.webview.html = this.getHtml(refs);
+        this.panel.webview.html = this.getHtml();
     }
 
-    private getHtml(refs: Array<[string, number]>): string {
+    private getHtml(): string {
         const entity = this.currentEntity!;
 
         return `<!DOCTYPE html>
@@ -141,14 +133,9 @@ export class EntityInspector {
             border-bottom: 1px solid var(--border-color);
         }
 
-        .header h2 {
-            margin: 0;
-        }
+        .header h2 { margin: 0; }
 
-        .actions {
-            display: flex;
-            gap: 8px;
-        }
+        .actions { display: flex; gap: 8px; }
 
         .actions button {
             padding: 4px 12px;
@@ -159,25 +146,10 @@ export class EntityInspector {
             border-radius: 4px;
         }
 
-        .actions button:hover {
-            background: var(--hover-bg);
-        }
+        .actions button:hover { background: var(--hover-bg); }
+        .actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        .section {
-            margin-bottom: 24px;
-        }
-
-        .section h3 {
-            margin: 0 0 12px 0;
-            font-size: 14px;
-            color: var(--vscode-descriptionForeground);
-            text-transform: uppercase;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
+        table { width: 100%; border-collapse: collapse; }
 
         th, td {
             padding: 8px;
@@ -197,16 +169,6 @@ export class EntityInspector {
             text-decoration: underline;
         }
 
-        .ref-list {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-        }
-
-        .ref-list li {
-            padding: 4px 0;
-        }
-
         pre {
             background: var(--header-bg);
             padding: 8px;
@@ -215,21 +177,9 @@ export class EntityInspector {
             margin: 0;
         }
 
-        .value-string {
-            color: var(--vscode-symbolIcon-stringForeground);
-        }
-
-        .value-number {
-            color: var(--vscode-symbolIcon-numberForeground);
-        }
-
-        .value-boolean {
-            color: var(--vscode-symbolIcon-booleanForeground);
-        }
-
-        .value-ref {
-            color: var(--link-color);
-        }
+        .value-string { color: var(--vscode-symbolIcon-stringForeground); }
+        .value-number { color: var(--vscode-symbolIcon-numberForeground); }
+        .value-boolean { color: var(--vscode-symbolIcon-booleanForeground); }
     </style>
 </head>
 <body>
@@ -242,45 +192,16 @@ export class EntityInspector {
         </div>
     </div>
 
-    <div class="section">
-        <h3>Attributes</h3>
-        <table>
-            ${this.renderAttributes(entity.attributes)}
-        </table>
-    </div>
-
-    ${refs.length > 0 ? `
-    <div class="section">
-        <h3>References to this Entity</h3>
-        <ul class="ref-list">
-            ${refs.map(([attr, eid]) => `
-                <li>
-                    <span>${attr}</span> from
-                    <span class="entity-link" onclick="navigate(${eid})">Entity ${eid}</span>
-                </li>
-            `).join('')}
-        </ul>
-    </div>
-    ` : ''}
+    <table>
+        ${this.renderAttributes(entity.attributes)}
+    </table>
 
     <script>
         const vscode = acquireVsCodeApi();
-
-        function navigate(entityId) {
-            vscode.postMessage({ command: 'navigate', entityId });
-        }
-
-        function goBack() {
-            vscode.postMessage({ command: 'back' });
-        }
-
-        function copyEdn() {
-            vscode.postMessage({ command: 'copyEdn' });
-        }
-
-        function refresh() {
-            vscode.postMessage({ command: 'refresh' });
-        }
+        function navigate(entityId) { vscode.postMessage({ command: 'navigate', entityId }); }
+        function goBack() { vscode.postMessage({ command: 'back' }); }
+        function copyEdn() { vscode.postMessage({ command: 'copyEdn' }); }
+        function refresh() { vscode.postMessage({ command: 'refresh' }); }
     </script>
 </body>
 </html>`;
@@ -306,7 +227,6 @@ export class EntityInspector {
         }
 
         if (typeof value === 'number') {
-            // Check if it might be an entity reference (integer)
             if (Number.isInteger(value) && value > 0) {
                 return `<span class="entity-link" onclick="navigate(${value})">${value}</span>`;
             }
@@ -318,9 +238,7 @@ export class EntityInspector {
         }
 
         if (Array.isArray(value)) {
-            if (value.length === 0) {
-                return '[]';
-            }
+            if (value.length === 0) { return '[]'; }
             const items = value.map(v => this.formatAttributeValue(v)).join(', ');
             return `[${items}]`;
         }
@@ -333,9 +251,7 @@ export class EntityInspector {
     }
 
     private async copyEntityAsEdn(): Promise<void> {
-        if (!this.currentEntity) {
-            return;
-        }
+        if (!this.currentEntity) { return; }
 
         const edn = this.toEdn(this.currentEntity.attributes);
         await vscode.env.clipboard.writeText(edn);
@@ -343,18 +259,10 @@ export class EntityInspector {
     }
 
     private toEdn(data: unknown): string {
-        if (data === null || data === undefined) {
-            return 'nil';
-        }
-        if (typeof data === 'string') {
-            return `"${data.replace(/"/g, '\\"')}"`;
-        }
-        if (typeof data === 'number' || typeof data === 'boolean') {
-            return String(data);
-        }
-        if (Array.isArray(data)) {
-            return '[' + data.map(d => this.toEdn(d)).join(' ') + ']';
-        }
+        if (data === null || data === undefined) { return 'nil'; }
+        if (typeof data === 'string') { return `"${data.replace(/"/g, '\\"')}"`; }
+        if (typeof data === 'number' || typeof data === 'boolean') { return String(data); }
+        if (Array.isArray(data)) { return '[' + data.map(d => this.toEdn(d)).join(' ') + ']'; }
         if (typeof data === 'object') {
             const entries = Object.entries(data);
             return '{' + entries.map(([k, v]) => `${k} ${this.toEdn(v)}`).join('\n ') + '}';
@@ -363,12 +271,8 @@ export class EntityInspector {
     }
 
     private escapeHtml(str: string): string {
-        return str
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
     }
 
     dispose(): void {

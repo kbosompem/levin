@@ -1,26 +1,26 @@
 import * as vscode from 'vscode';
-import { CalvaBridge, SchemaAttribute } from '../calva-bridge';
+import { DtlvBridge, SchemaAttribute } from '../dtlv-bridge';
 
 export class SchemaEditor {
     private panel: vscode.WebviewPanel | undefined;
-    private currentDbName: string = '';
+    private currentDbPath: string = '';
     private schema: SchemaAttribute[] = [];
 
     constructor(
-        private context: vscode.ExtensionContext,
-        private calvaBridge: CalvaBridge
+        private _context: vscode.ExtensionContext,
+        private dtlvBridge: DtlvBridge
     ) {}
 
-    async show(dbName: string): Promise<void> {
-        this.currentDbName = dbName;
+    async show(dbPath: string): Promise<void> {
+        this.currentDbPath = dbPath;
 
         // Fetch current schema
-        this.schema = await this.calvaBridge.getSchema(dbName);
+        this.schema = await this.dtlvBridge.getSchema(dbPath);
 
         if (!this.panel) {
             this.panel = vscode.window.createWebviewPanel(
                 'levinSchema',
-                `Schema: ${dbName}`,
+                `Schema: ${dbPath.split('/').pop()}`,
                 vscode.ViewColumn.Active,
                 {
                     enableScripts: true,
@@ -37,7 +37,7 @@ export class SchemaEditor {
                 undefined
             );
         } else {
-            this.panel.title = `Schema: ${dbName}`;
+            this.panel.title = `Schema: ${dbPath.split('/').pop()}`;
         }
 
         this.updateContent();
@@ -48,9 +48,6 @@ export class SchemaEditor {
             case 'addAttribute':
                 await this.addAttribute(message.attribute as NewAttribute);
                 break;
-            case 'deleteAttribute':
-                await this.deleteAttribute(message.attribute as string);
-                break;
             case 'refresh':
                 await this.refresh();
                 break;
@@ -60,16 +57,15 @@ export class SchemaEditor {
     private async addAttribute(attr: NewAttribute): Promise<void> {
         const fullAttribute = `${attr.namespace}/${attr.name}`;
 
-        const result = await this.calvaBridge.evaluate(`
-            (datalevin-ext.core/add-schema! "${this.currentDbName}"
-                {:attribute "${fullAttribute}"
-                 :valueType "${attr.valueType}"
-                 :cardinality "${attr.cardinality}"
-                 ${attr.index ? ':index true' : ''}
-                 ${attr.unique ? `:unique "${attr.unique}"` : ''}
-                 ${attr.fulltext ? ':fulltext true' : ''}
-                 ${attr.isComponent ? ':isComponent true' : ''}})
-        `);
+        const result = await this.dtlvBridge.addSchema(this.currentDbPath, {
+            attribute: fullAttribute,
+            valueType: attr.valueType,
+            cardinality: attr.cardinality,
+            index: attr.index,
+            unique: attr.unique || undefined,
+            fulltext: attr.fulltext,
+            isComponent: attr.isComponent
+        });
 
         if (result.success) {
             vscode.window.showInformationMessage(`Added attribute :${fullAttribute}`);
@@ -79,40 +75,17 @@ export class SchemaEditor {
         }
     }
 
-    private async deleteAttribute(attribute: string): Promise<void> {
-        const confirm = await vscode.window.showWarningMessage(
-            `Delete attribute ${attribute}? This cannot be undone.`,
-            { modal: true },
-            'Delete'
-        );
-
-        if (confirm !== 'Delete') {
-            return;
-        }
-
-        // Note: Datalevin doesn't support deleting schema attributes directly
-        // This would need a retraction of the schema definition
-        vscode.window.showWarningMessage(
-            'Schema attribute deletion is not supported in Datalevin. ' +
-            'The attribute will remain but can be ignored.'
-        );
-    }
-
     private async refresh(): Promise<void> {
-        this.schema = await this.calvaBridge.getSchema(this.currentDbName);
+        this.schema = await this.dtlvBridge.getSchema(this.currentDbPath);
         this.updateContent();
     }
 
     private updateContent(): void {
-        if (!this.panel) {
-            return;
-        }
-
+        if (!this.panel) { return; }
         this.panel.webview.html = this.getHtml();
     }
 
     private getHtml(): string {
-        // Get unique namespaces for dropdown
         const namespaces = [...new Set(this.schema.map(s => {
             const parts = s.attribute.split('/');
             return parts.length > 1 ? parts[0].replace(':', '') : 'db';
@@ -150,9 +123,7 @@ export class SchemaEditor {
             border-radius: 4px;
         }
 
-        .section h3 {
-            margin: 0 0 16px 0;
-        }
+        .section h3 { margin: 0 0 16px 0; }
 
         .form-row {
             display: flex;
@@ -180,10 +151,7 @@ export class SchemaEditor {
             border-radius: 4px;
         }
 
-        input[type="checkbox"] {
-            width: 16px;
-            height: 16px;
-        }
+        input[type="checkbox"] { width: 16px; height: 16px; }
 
         .checkbox-group {
             display: flex;
@@ -206,25 +174,9 @@ export class SchemaEditor {
             cursor: pointer;
         }
 
-        button:hover {
-            background: var(--vscode-button-hoverBackground);
-        }
+        button:hover { background: var(--vscode-button-hoverBackground); }
 
-        button.secondary {
-            background: var(--header-bg);
-            color: var(--text-color);
-            border: 1px solid var(--border-color);
-        }
-
-        button.danger {
-            background: var(--vscode-inputValidation-errorBackground);
-            color: var(--vscode-errorForeground);
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
+        table { width: 100%; border-collapse: collapse; }
 
         th, td {
             padding: 8px;
@@ -232,13 +184,9 @@ export class SchemaEditor {
             border-bottom: 1px solid var(--border-color);
         }
 
-        th {
-            background: var(--header-bg);
-        }
+        th { background: var(--header-bg); }
 
-        .filter-row {
-            margin-bottom: 12px;
-        }
+        .filter-row { margin-bottom: 12px; }
 
         .tag {
             display: inline-block;
@@ -355,27 +303,14 @@ export class SchemaEditor {
             }
 
             let unique = null;
-            if (uniqueIdentity) {
-                unique = 'identity';
-            } else if (uniqueValue) {
-                unique = 'value';
-            }
+            if (uniqueIdentity) { unique = 'identity'; }
+            else if (uniqueValue) { unique = 'value'; }
 
             vscode.postMessage({
                 command: 'addAttribute',
-                attribute: {
-                    namespace,
-                    name,
-                    valueType,
-                    cardinality,
-                    index,
-                    unique,
-                    fulltext,
-                    isComponent
-                }
+                attribute: { namespace, name, valueType, cardinality, index, unique, fulltext, isComponent }
             });
 
-            // Clear form
             document.getElementById('namespace').value = '';
             document.getElementById('name').value = '';
             document.getElementById('index').checked = false;
@@ -385,17 +320,9 @@ export class SchemaEditor {
             document.getElementById('isComponent').checked = false;
         }
 
-        function deleteAttribute(attribute) {
-            vscode.postMessage({
-                command: 'deleteAttribute',
-                attribute
-            });
-        }
-
         function filterAttributes() {
             const filter = document.getElementById('filter').value.toLowerCase();
             const rows = document.querySelectorAll('#schemaTable tbody tr');
-
             rows.forEach(row => {
                 const attr = row.getAttribute('data-attribute').toLowerCase();
                 row.style.display = attr.includes(filter) ? '' : 'none';
@@ -407,12 +334,8 @@ export class SchemaEditor {
     }
 
     private escapeHtml(str: string): string {
-        return str
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
     }
 
     dispose(): void {

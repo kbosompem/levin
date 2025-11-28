@@ -1,7 +1,5 @@
 import * as vscode from 'vscode';
-import { CalvaBridge } from './calva-bridge';
-import { EnvParser } from './config/env-parser';
-import { Settings } from './config/settings';
+import { DtlvBridge } from './dtlv-bridge';
 import { DatabaseTreeProvider, DatabaseTreeItem } from './providers/tree-provider';
 import { QueryCompletionProvider } from './providers/completion-provider';
 import { QueryCodeLensProvider } from './providers/codelens-provider';
@@ -13,7 +11,7 @@ import { TransactionPanel } from './views/transaction-panel';
 import { QueryHistoryProvider } from './providers/query-history-provider';
 import { SavedQueriesProvider } from './providers/saved-queries-provider';
 
-let calvaBridge: CalvaBridge;
+let dtlvBridge: DtlvBridge;
 let databaseTreeProvider: DatabaseTreeProvider;
 let queryHistoryProvider: QueryHistoryProvider;
 let savedQueriesProvider: SavedQueriesProvider;
@@ -25,27 +23,17 @@ let transactionPanel: TransactionPanel | undefined;
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     console.log('Levin extension is activating...');
 
-    // Initialize Calva bridge
-    calvaBridge = new CalvaBridge();
-    const calvaInitialized = await calvaBridge.initialize();
+    // Initialize dtlv bridge
+    dtlvBridge = new DtlvBridge();
 
-    if (!calvaInitialized) {
-        vscode.window.showErrorMessage(
-            'Levin requires Calva extension. Please install Calva first.',
-            'Install Calva'
-        ).then(selection => {
-            if (selection === 'Install Calva') {
-                vscode.commands.executeCommand(
-                    'workbench.extensions.installExtension',
-                    'betterthantomorrow.calva'
-                );
-            }
-        });
-        return;
+    // Check if dtlv is installed
+    const dtlvInstalled = await dtlvBridge.checkDtlvInstalled();
+    if (!dtlvInstalled) {
+        await dtlvBridge.promptInstallDtlv();
     }
 
     // Initialize tree providers
-    databaseTreeProvider = new DatabaseTreeProvider(calvaBridge);
+    databaseTreeProvider = new DatabaseTreeProvider(dtlvBridge);
     queryHistoryProvider = new QueryHistoryProvider(context);
     savedQueriesProvider = new SavedQueriesProvider(context);
 
@@ -74,7 +62,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(
             selector,
-            new QueryCompletionProvider(calvaBridge),
+            new QueryCompletionProvider(dtlvBridge),
             ':', '?', '['
         )
     );
@@ -89,33 +77,111 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context.subscriptions.push(
         vscode.languages.registerHoverProvider(
             selector,
-            new QueryHoverProvider(calvaBridge)
+            new QueryHoverProvider(dtlvBridge)
         )
     );
 
     // Register commands
     registerCommands(context);
 
-    // Check for .env file and prompt jack-in
-    await checkForDatabases(context);
+    // Load recently opened databases
+    loadRecentDatabases(context);
 
     console.log('Levin extension activated successfully');
 }
 
 function registerCommands(context: vscode.ExtensionContext): void {
-    // Jack In command
+    // Open Database command
     context.subscriptions.push(
-        vscode.commands.registerCommand('levin.jackIn', async () => {
-            await handleJackIn();
+        vscode.commands.registerCommand('levin.openDatabase', async () => {
+            const options: vscode.OpenDialogOptions = {
+                canSelectFiles: false,
+                canSelectFolders: true,
+                canSelectMany: false,
+                openLabel: 'Open Database',
+                title: 'Select Datalevin Database Folder'
+            };
+
+            const result = await vscode.window.showOpenDialog(options);
+
+            if (result && result[0]) {
+                const dbPath = result[0].fsPath;
+                openDatabase(context, dbPath);
+            }
+        })
+    );
+
+    // Create Database command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.createDatabase', async () => {
+            // First check if dtlv is installed
+            const dtlvInstalled = await dtlvBridge.checkDtlvInstalled();
+            if (!dtlvInstalled) {
+                await dtlvBridge.promptInstallDtlv();
+                return;
+            }
+
+            const options: vscode.OpenDialogOptions = {
+                canSelectFiles: false,
+                canSelectFolders: true,
+                canSelectMany: false,
+                openLabel: 'Select Parent Folder',
+                title: 'Select folder to create database in'
+            };
+
+            const result = await vscode.window.showOpenDialog(options);
+
+            if (result && result[0]) {
+                const parentPath = result[0].fsPath;
+
+                const dbName = await vscode.window.showInputBox({
+                    prompt: 'Enter database name',
+                    placeHolder: 'my-database',
+                    validateInput: (value) => {
+                        if (!value || value.trim().length === 0) {
+                            return 'Database name is required';
+                        }
+                        if (/[<>:"/\\|?*]/.test(value)) {
+                            return 'Invalid characters in database name';
+                        }
+                        return null;
+                    }
+                });
+
+                if (dbName) {
+                    const dbPath = `${parentPath}/${dbName}`;
+                    const createResult = await dtlvBridge.createDatabase(dbPath);
+
+                    if (createResult.success) {
+                        openDatabase(context, dbPath);
+                        vscode.window.showInformationMessage(`Created database: ${dbName}`);
+                    } else {
+                        vscode.window.showErrorMessage(`Failed to create database: ${createResult.error}`);
+                    }
+                }
+            }
+        })
+    );
+
+    // Close Database command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.closeDatabase', async (item?: DatabaseTreeItem) => {
+            const dbPath = item?.dbPath || await selectDatabase();
+            if (dbPath) {
+                dtlvBridge.closeDatabase(dbPath);
+                removeFromRecentDatabases(context, dbPath);
+                databaseTreeProvider.refresh();
+                vscode.window.showInformationMessage(`Closed database`);
+            }
         })
     );
 
     // New Query command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.newQuery', async (item?: DatabaseTreeItem) => {
-            const dbName = item?.dbName || await selectDatabase();
-            if (dbName) {
-                await createNewQuery(dbName);
+            const dbPath = item?.dbPath || await selectDatabase();
+            if (dbPath) {
+                await createNewQuery(dbPath);
             }
         })
     );
@@ -123,24 +189,24 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Run Query command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.runQuery', async () => {
-            await runCurrentQuery();
+            await runCurrentQuery(context);
         })
     );
 
     // Show Entity command
     context.subscriptions.push(
-        vscode.commands.registerCommand('levin.showEntity', async (dbName?: string, entityId?: number) => {
-            if (!dbName || entityId === undefined) {
+        vscode.commands.registerCommand('levin.showEntity', async (dbPath?: string, entityId?: number) => {
+            if (!dbPath || entityId === undefined) {
                 const input = await vscode.window.showInputBox({
                     prompt: 'Enter entity ID',
                     placeHolder: '42'
                 });
                 if (!input) { return; }
                 entityId = parseInt(input, 10);
-                dbName = await selectDatabase();
+                dbPath = await selectDatabase();
             }
-            if (dbName && entityId !== undefined) {
-                await showEntityInspector(context, dbName, entityId);
+            if (dbPath && entityId !== undefined) {
+                await showEntityInspector(context, dbPath, entityId);
             }
         })
     );
@@ -163,111 +229,29 @@ function registerCommands(context: vscode.ExtensionContext): void {
         })
     );
 
-    // Disconnect Database command
+    // Copy Path command
     context.subscriptions.push(
-        vscode.commands.registerCommand('levin.disconnect', async (item?: DatabaseTreeItem) => {
-            const dbName = item?.dbName || await selectDatabase();
-            if (dbName) {
-                await calvaBridge.evaluate(`(datalevin-ext.core/disconnect-db! "${dbName}")`);
-                databaseTreeProvider.refresh();
-                vscode.window.showInformationMessage(`Disconnected from ${dbName}`);
-            }
-        })
-    );
-
-    // Add Database command
-    context.subscriptions.push(
-        vscode.commands.registerCommand('levin.addDatabase', async () => {
-            // Check REPL connection first
-            const isConnected = await calvaBridge.isConnected();
-            if (!isConnected) {
-                const action = await vscode.window.showErrorMessage(
-                    'No REPL connection. You need to Jack In first.',
-                    'Jack In'
-                );
-                if (action === 'Jack In') {
-                    await handleJackIn();
-                }
-                return;
-            }
-
-            const path = await vscode.window.showInputBox({
-                prompt: 'Enter database path',
-                placeHolder: '/path/to/database'
-            });
-            if (path) {
-                const name = await vscode.window.showInputBox({
-                    prompt: 'Enter database name',
-                    placeHolder: 'my-database'
-                });
-                if (name) {
-                    const result = await calvaBridge.evaluate(
-                        `(datalevin-ext.core/connect-db! "${name}" "${path}")`
-                    );
-                    if (result.success) {
-                        databaseTreeProvider.refresh();
-                        vscode.window.showInformationMessage(`Connected to ${name}`);
-                    } else {
-                        vscode.window.showErrorMessage(`Failed to connect: ${result.error}`);
-                    }
-                }
-            }
-        })
-    );
-
-    // Create Database command
-    context.subscriptions.push(
-        vscode.commands.registerCommand('levin.createDatabase', async () => {
-            // Check REPL connection first
-            const isConnected = await calvaBridge.isConnected();
-            if (!isConnected) {
-                const action = await vscode.window.showErrorMessage(
-                    'No REPL connection. You need to Jack In first.',
-                    'Jack In'
-                );
-                if (action === 'Jack In') {
-                    await handleJackIn();
-                }
-                return;
-            }
-
-            const path = await vscode.window.showInputBox({
-                prompt: 'Enter path for new database',
-                placeHolder: '/path/to/new-database'
-            });
-            if (path) {
-                const name = await vscode.window.showInputBox({
-                    prompt: 'Enter database name',
-                    placeHolder: 'new-database'
-                });
-                if (name) {
-                    const result = await calvaBridge.evaluate(
-                        `(datalevin-ext.core/connect-db! "${name}" "${path}" :create? true)`
-                    );
-                    if (result.success) {
-                        databaseTreeProvider.refresh();
-                        vscode.window.showInformationMessage(`Created database ${name}`);
-                    } else {
-                        vscode.window.showErrorMessage(`Failed to create database: ${result.error}`);
-                    }
-                }
+        vscode.commands.registerCommand('levin.copyPath', async (item?: DatabaseTreeItem) => {
+            if (item?.dbPath) {
+                await vscode.env.clipboard.writeText(item.dbPath);
+                vscode.window.showInformationMessage('Path copied to clipboard');
             }
         })
     );
 
     // Internal command for running query from CodeLens
     context.subscriptions.push(
-        vscode.commands.registerCommand('levin.runQueryAtLine', async (line: number) => {
-            await runQueryAtLine(line);
+        vscode.commands.registerCommand('levin.runQueryAtLine', async (_line: number) => {
+            await runCurrentQuery(context);
         })
     );
 
     // Edit Schema command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.editSchema', async (item?: DatabaseTreeItem) => {
-            const dbName = item?.dbName || await selectDatabase();
-            if (dbName) {
-                await showSchemaEditor(context, dbName);
+            const dbPath = item?.dbPath || await selectDatabase();
+            if (dbPath) {
+                await showSchemaEditor(context, dbPath);
             }
         })
     );
@@ -275,9 +259,9 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Show Transaction Panel command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.showTransactionPanel', async (item?: DatabaseTreeItem) => {
-            const dbName = item?.dbName || await selectDatabase();
-            if (dbName) {
-                await showTransactionPanel(context, dbName);
+            const dbPath = item?.dbPath || await selectDatabase();
+            if (dbPath) {
+                await showTransactionPanel(context, dbPath);
             }
         })
     );
@@ -303,7 +287,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Run Saved Query command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.runSavedQuery', async (queryText: string) => {
-            await executeQuery(queryText);
+            await executeQuery(context, queryText);
         })
     );
 
@@ -315,136 +299,83 @@ function registerCommands(context: vscode.ExtensionContext): void {
     );
 }
 
-async function checkForDatabases(_context: vscode.ExtensionContext): Promise<void> {
-    const settings = new Settings();
-
-    if (!settings.autoJackIn) {
-        return;
-    }
-
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders) {
-        return;
-    }
-
-    for (const folder of workspaceFolders) {
-        const envPath = vscode.Uri.joinPath(folder.uri, settings.envFile);
-        try {
-            const envContent = await vscode.workspace.fs.readFile(envPath);
-            const envText = Buffer.from(envContent).toString('utf8');
-            const parser = new EnvParser(envText);
-            const dbPaths = parser.getDatabasePaths();
-
-            if (dbPaths.length > 0) {
-                const response = await vscode.window.showInformationMessage(
-                    `Found ${dbPaths.length} Datalevin database(s) in .env. Jack in?`,
-                    'Yes',
-                    'No'
-                );
-
-                if (response === 'Yes') {
-                    await handleJackIn();
-                }
-                break;
-            }
-        } catch {
-            // .env file not found, continue
-        }
-    }
-}
-
-async function handleJackIn(): Promise<void> {
-    const settings = new Settings();
-
-    // Check if already connected
-    const isConnected = await calvaBridge.isConnected();
-
-    if (!isConnected) {
-        // Trigger Calva jack-in with datalevin dependency
-        vscode.window.showInformationMessage('Starting Calva jack-in with Datalevin...');
-        await calvaBridge.jackIn(settings.datalevinVersion);
-
-        // Wait for REPL to be ready
-        await waitForRepl();
-    }
-
-    // Inject bootstrap code
-    await calvaBridge.injectBootstrap();
-
-    // Connect to databases from .env
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (workspaceFolders) {
-        for (const folder of workspaceFolders) {
-            const envPath = vscode.Uri.joinPath(folder.uri, settings.envFile);
-            try {
-                const envContent = await vscode.workspace.fs.readFile(envPath);
-                const envText = Buffer.from(envContent).toString('utf8');
-                const parser = new EnvParser(envText);
-                const dbPaths = parser.getDatabasePaths();
-
-                for (const dbPath of dbPaths) {
-                    const dbName = dbPath.split('/').pop() || dbPath;
-                    await calvaBridge.evaluate(
-                        `(datalevin-ext.core/connect-db! "${dbName}" "${dbPath}")`
-                    );
-                }
-            } catch {
-                // .env file not found, continue
-            }
-        }
-    }
-
-    // Refresh tree view
+function openDatabase(context: vscode.ExtensionContext, dbPath: string): void {
+    dtlvBridge.openDatabase(dbPath);
+    addToRecentDatabases(context, dbPath);
     databaseTreeProvider.refresh();
-    vscode.window.showInformationMessage('Levin: Connected to Datalevin');
 }
 
-async function waitForRepl(maxWaitMs: number = 60000): Promise<void> {
-    const startTime = Date.now();
-    while (Date.now() - startTime < maxWaitMs) {
-        if (await calvaBridge.isConnected()) {
-            return;
-        }
-        await new Promise(resolve => setTimeout(resolve, 1000));
+function loadRecentDatabases(_context: vscode.ExtensionContext): void {
+    const config = vscode.workspace.getConfiguration('levin');
+    const recent = config.get<string[]>('recentDatabases', []);
+
+    for (const dbPath of recent) {
+        dtlvBridge.openDatabase(dbPath);
     }
-    throw new Error('Timeout waiting for REPL connection');
+
+    if (recent.length > 0) {
+        databaseTreeProvider.refresh();
+    }
+}
+
+function addToRecentDatabases(context: vscode.ExtensionContext, dbPath: string): void {
+    const config = vscode.workspace.getConfiguration('levin');
+    const recent = config.get<string[]>('recentDatabases', []);
+
+    // Remove if exists, then add to front
+    const filtered = recent.filter(p => p !== dbPath);
+    filtered.unshift(dbPath);
+
+    // Keep only last 10
+    const updated = filtered.slice(0, 10);
+
+    config.update('recentDatabases', updated, vscode.ConfigurationTarget.Global);
+}
+
+function removeFromRecentDatabases(context: vscode.ExtensionContext, dbPath: string): void {
+    const config = vscode.workspace.getConfiguration('levin');
+    const recent = config.get<string[]>('recentDatabases', []);
+    const updated = recent.filter(p => p !== dbPath);
+    config.update('recentDatabases', updated, vscode.ConfigurationTarget.Global);
 }
 
 async function selectDatabase(): Promise<string | undefined> {
-    const result = await calvaBridge.evaluate('(datalevin-ext.core/list-connections)');
-    if (!result.success || !result.value) {
-        vscode.window.showErrorMessage('No databases connected. Jack in first.');
+    const databases = dtlvBridge.getOpenDatabases();
+
+    if (databases.length === 0) {
+        const action = await vscode.window.showErrorMessage(
+            'No databases open. Open a database first.',
+            'Open Database'
+        );
+        if (action === 'Open Database') {
+            vscode.commands.executeCommand('levin.openDatabase');
+        }
         return undefined;
     }
 
-    const connections = result.value as Array<{ name: string; path: string }>;
-    if (connections.length === 0) {
-        vscode.window.showErrorMessage('No databases connected. Jack in first.');
-        return undefined;
+    if (databases.length === 1) {
+        return databases[0].path;
     }
 
-    if (connections.length === 1) {
-        return connections[0].name;
-    }
-
-    const items = connections.map(c => ({
-        label: c.name,
-        description: c.path
+    const items = databases.map(db => ({
+        label: db.name,
+        description: db.path
     }));
 
     const selected = await vscode.window.showQuickPick(items, {
         placeHolder: 'Select a database'
     });
 
-    return selected?.label;
+    return selected?.description;
 }
 
-async function createNewQuery(dbName: string): Promise<void> {
-    const content = `{:db "${dbName}"
+async function createNewQuery(dbPath: string): Promise<void> {
+    const _dbName = dbPath.split('/').pop() || dbPath;
+
+    const content = `{:db "${dbPath}"
  :query [:find ?e
          :where
          [?e :db/id _]]
- :args []
  :limit 50}`;
 
     const doc = await vscode.workspace.openTextDocument({
@@ -455,7 +386,7 @@ async function createNewQuery(dbName: string): Promise<void> {
     await vscode.window.showTextDocument(doc);
 }
 
-async function runCurrentQuery(): Promise<void> {
+async function runCurrentQuery(context: vscode.ExtensionContext): Promise<void> {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
         vscode.window.showWarningMessage('No active editor');
@@ -463,26 +394,24 @@ async function runCurrentQuery(): Promise<void> {
     }
 
     const queryText = editor.document.getText();
-    await executeQuery(queryText);
+    await executeQuery(context, queryText);
 }
 
-async function runQueryAtLine(_line: number): Promise<void> {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) { return; }
+async function executeQuery(context: vscode.ExtensionContext, queryText: string): Promise<void> {
+    // Check dtlv is installed
+    const dtlvInstalled = await dtlvBridge.checkDtlvInstalled();
+    if (!dtlvInstalled) {
+        await dtlvBridge.promptInstallDtlv();
+        return;
+    }
 
-    // For now, run the entire document as a query
-    const queryText = editor.document.getText();
-    await executeQuery(queryText);
-}
-
-async function executeQuery(queryText: string): Promise<void> {
     try {
         // Parse the query to extract components
-        const queryMatch = queryText.match(/:db\s+"([^"]+)"/);
-        const dbName = queryMatch?.[1];
+        const dbMatch = queryText.match(/:db\s+"([^"]+)"/);
+        const dbPath = dbMatch?.[1];
 
-        if (!dbName) {
-            vscode.window.showErrorMessage('Query must specify :db');
+        if (!dbPath) {
+            vscode.window.showErrorMessage('Query must specify :db with database path');
             return;
         }
 
@@ -494,24 +423,27 @@ async function executeQuery(queryText: string): Promise<void> {
         const limitMatch = queryText.match(/:limit\s+(\d+)/);
         const limit = limitMatch ? parseInt(limitMatch[1], 10) : 50;
 
-        // Execute query via REPL
-        const escapedQuery = queryPortion.replace(/"/g, '\\"');
-        const result = await calvaBridge.evaluate(
-            `(datalevin-ext.core/run-query "${dbName}" "${escapedQuery}" :limit ${limit})`
-        );
+        // Show progress
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Running query...',
+            cancellable: false
+        }, async () => {
+            const result = await dtlvBridge.runQuery(dbPath, queryPortion, limit);
 
-        if (result.success) {
-            // Add to history
-            queryHistoryProvider.addQuery(queryText);
+            if (result.success) {
+                // Add to history
+                queryHistoryProvider.addQuery(queryText);
 
-            // Show results panel
-            if (!resultsPanel) {
-                resultsPanel = new ResultsPanel(calvaBridge);
+                // Show results panel
+                if (!resultsPanel) {
+                    resultsPanel = new ResultsPanel(dtlvBridge);
+                }
+                resultsPanel.show(result.data, dbPath);
+            } else {
+                vscode.window.showErrorMessage(`Query error: ${result.error}`);
             }
-            resultsPanel.show(result.value, dbName);
-        } else {
-            vscode.window.showErrorMessage(`Query error: ${result.error}`);
-        }
+        });
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to execute query: ${error}`);
     }
@@ -519,33 +451,33 @@ async function executeQuery(queryText: string): Promise<void> {
 
 async function showEntityInspector(
     context: vscode.ExtensionContext,
-    dbName: string,
+    dbPath: string,
     entityId: number
 ): Promise<void> {
     if (!entityInspector) {
-        entityInspector = new EntityInspector(context, calvaBridge);
+        entityInspector = new EntityInspector(context, dtlvBridge);
     }
-    await entityInspector.show(dbName, entityId);
+    await entityInspector.show(dbPath, entityId);
 }
 
 async function showSchemaEditor(
     context: vscode.ExtensionContext,
-    dbName: string
+    dbPath: string
 ): Promise<void> {
     if (!schemaEditor) {
-        schemaEditor = new SchemaEditor(context, calvaBridge);
+        schemaEditor = new SchemaEditor(context, dtlvBridge);
     }
-    await schemaEditor.show(dbName);
+    await schemaEditor.show(dbPath);
 }
 
 async function showTransactionPanel(
     context: vscode.ExtensionContext,
-    dbName: string
+    dbPath: string
 ): Promise<void> {
     if (!transactionPanel) {
-        transactionPanel = new TransactionPanel(context, calvaBridge);
+        transactionPanel = new TransactionPanel(context, dtlvBridge);
     }
-    await transactionPanel.show(dbName);
+    await transactionPanel.show(dbPath);
 }
 
 export function deactivate(): void {

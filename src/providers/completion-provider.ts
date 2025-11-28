@@ -1,34 +1,34 @@
 import * as vscode from 'vscode';
-import { CalvaBridge } from '../calva-bridge';
+import { DtlvBridge } from '../dtlv-bridge';
 
 export class QueryCompletionProvider implements vscode.CompletionItemProvider {
     private attributeCache: Map<string, string[]> = new Map();
     private lastCacheUpdate: number = 0;
     private cacheMaxAge: number = 30000; // 30 seconds
 
-    constructor(private calvaBridge: CalvaBridge) {}
+    constructor(private dtlvBridge: DtlvBridge) {}
 
     async provideCompletionItems(
         document: vscode.TextDocument,
         position: vscode.Position,
-        token: vscode.CancellationToken,
+        _token: vscode.CancellationToken,
         context: vscode.CompletionContext
     ): Promise<vscode.CompletionItem[]> {
         const items: vscode.CompletionItem[] = [];
 
         const linePrefix = document.lineAt(position).text.substring(0, position.character);
 
-        // Get database name from document
+        // Get database path from document
         const docText = document.getText();
         const dbMatch = docText.match(/:db\s+"([^"]+)"/);
-        const dbName = dbMatch?.[1];
+        const dbPath = dbMatch?.[1];
 
         // Attribute completion (after :)
         if (context.triggerCharacter === ':' || linePrefix.match(/:\w*$/)) {
             items.push(...this.getKeywordCompletions());
 
-            if (dbName) {
-                const attributes = await this.getAttributesCached(dbName);
+            if (dbPath) {
+                const attributes = await this.getAttributesCached(dbPath);
                 items.push(...this.getAttributeCompletions(attributes));
             }
         }
@@ -153,20 +153,20 @@ export class QueryCompletionProvider implements vscode.CompletionItemProvider {
         });
     }
 
-    private async getAttributesCached(dbName: string): Promise<string[]> {
+    private async getAttributesCached(dbPath: string): Promise<string[]> {
         const now = Date.now();
 
-        if (!this.attributeCache.has(dbName) || now - this.lastCacheUpdate > this.cacheMaxAge) {
+        if (!this.attributeCache.has(dbPath) || now - this.lastCacheUpdate > this.cacheMaxAge) {
             try {
-                const attributes = await this.calvaBridge.getAttributes(dbName);
-                this.attributeCache.set(dbName, attributes);
+                const attributes = await this.dtlvBridge.getAttributes(dbPath);
+                this.attributeCache.set(dbPath, attributes);
                 this.lastCacheUpdate = now;
             } catch {
-                return this.attributeCache.get(dbName) || [];
+                return this.attributeCache.get(dbPath) || [];
             }
         }
 
-        return this.attributeCache.get(dbName) || [];
+        return this.attributeCache.get(dbPath) || [];
     }
 
     clearCache(): void {
