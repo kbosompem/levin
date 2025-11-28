@@ -12,12 +12,18 @@ export class TransactionPanel {
     ) {}
 
     async show(dbPath: string): Promise<void> {
+        if (!dbPath) {
+            vscode.window.showErrorMessage('No database path provided');
+            return;
+        }
+
         this.currentDbPath = dbPath;
+        const dbName = dbPath.split('/').pop() || 'Unknown';
 
         if (!this.panel) {
             this.panel = vscode.window.createWebviewPanel(
                 'levinTransaction',
-                `Transaction: ${dbPath.split('/').pop()}`,
+                `Transaction: ${dbName}`,
                 vscode.ViewColumn.Active,
                 {
                     enableScripts: true,
@@ -34,7 +40,7 @@ export class TransactionPanel {
                 undefined
             );
         } else {
-            this.panel.title = `Transaction: ${dbPath.split('/').pop()}`;
+            this.panel.title = `Transaction: ${dbName}`;
         }
 
         this.updateContent();

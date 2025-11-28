@@ -12,15 +12,22 @@ export class SchemaEditor {
     ) {}
 
     async show(dbPath: string): Promise<void> {
+        if (!dbPath) {
+            vscode.window.showErrorMessage('No database path provided');
+            return;
+        }
+
         this.currentDbPath = dbPath;
 
         // Fetch current schema
         this.schema = await this.dtlvBridge.getSchema(dbPath);
 
+        const dbName = dbPath.split('/').pop() || 'Unknown';
+
         if (!this.panel) {
             this.panel = vscode.window.createWebviewPanel(
                 'levinSchema',
-                `Schema: ${dbPath.split('/').pop()}`,
+                `Schema: ${dbName}`,
                 vscode.ViewColumn.Active,
                 {
                     enableScripts: true,
@@ -37,7 +44,7 @@ export class SchemaEditor {
                 undefined
             );
         } else {
-            this.panel.title = `Schema: ${dbPath.split('/').pop()}`;
+            this.panel.title = `Schema: ${dbName}`;
         }
 
         this.updateContent();

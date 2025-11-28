@@ -166,7 +166,16 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Close Database command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.closeDatabase', async (item?: DatabaseTreeItem) => {
-            const dbPath = item?.dbPath || await selectDatabase();
+            let dbPath: string | undefined;
+            if (item) {
+                const anyItem = item as unknown as Record<string, unknown>;
+                dbPath = item.dbPath as string
+                    || anyItem.description as string
+                    || anyItem.tooltip as string;
+            }
+            if (!dbPath) {
+                dbPath = await selectDatabase();
+            }
             if (dbPath) {
                 dtlvBridge.closeDatabase(dbPath);
                 removeFromRecentDatabases(context, dbPath);
@@ -179,7 +188,16 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // New Query command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.newQuery', async (item?: DatabaseTreeItem) => {
-            const dbPath = item?.dbPath || await selectDatabase();
+            let dbPath: string | undefined;
+            if (item) {
+                const anyItem = item as unknown as Record<string, unknown>;
+                dbPath = item.dbPath as string
+                    || anyItem.description as string
+                    || anyItem.tooltip as string;
+            }
+            if (!dbPath) {
+                dbPath = await selectDatabase();
+            }
             if (dbPath) {
                 await createNewQuery(dbPath);
             }
@@ -249,7 +267,18 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Edit Schema command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.editSchema', async (item?: DatabaseTreeItem) => {
-            const dbPath = item?.dbPath || await selectDatabase();
+            // Handle both DatabaseTreeItem and plain objects from context menu
+            let dbPath: string | undefined;
+            if (item) {
+                // Try various properties - VS Code may serialize differently
+                const anyItem = item as unknown as Record<string, unknown>;
+                dbPath = item.dbPath as string
+                    || anyItem.description as string
+                    || anyItem.tooltip as string;
+            }
+            if (!dbPath) {
+                dbPath = await selectDatabase();
+            }
             if (dbPath) {
                 await showSchemaEditor(context, dbPath);
             }
@@ -259,7 +288,18 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Show Transaction Panel command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.showTransactionPanel', async (item?: DatabaseTreeItem) => {
-            const dbPath = item?.dbPath || await selectDatabase();
+            // Handle both DatabaseTreeItem and plain objects from context menu
+            let dbPath: string | undefined;
+            if (item) {
+                // Try various properties - VS Code may serialize differently
+                const anyItem = item as unknown as Record<string, unknown>;
+                dbPath = item.dbPath as string
+                    || anyItem.description as string
+                    || anyItem.tooltip as string;
+            }
+            if (!dbPath) {
+                dbPath = await selectDatabase();
+            }
             if (dbPath) {
                 await showTransactionPanel(context, dbPath);
             }

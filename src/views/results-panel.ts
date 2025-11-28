@@ -88,6 +88,11 @@ export class ResultsPanel {
             return this.getErrorHtml(results.error);
         }
 
+        // Handle case where results might be missing or malformed
+        if (!results.results || !Array.isArray(results.results)) {
+            return this.getErrorHtml('No results returned or invalid result format');
+        }
+
         const startIndex = this.currentPage * this.pageSize;
         const endIndex = Math.min(startIndex + this.pageSize, results.results.length);
         const pageResults = results.results.slice(startIndex, endIndex);
