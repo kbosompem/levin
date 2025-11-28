@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { spawn, execSync } from 'child_process';
+import { spawn } from 'child_process';
 import * as path from 'path';
 import { parseEdn } from './utils/edn-parser';
 
@@ -44,12 +44,11 @@ export class DtlvBridge {
      * Check if dtlv CLI is available
      */
     async checkDtlvInstalled(): Promise<boolean> {
-        try {
-            execSync(`${this.dtlvPath} help`, { stdio: 'pipe' });
-            return true;
-        } catch {
-            return false;
-        }
+        return new Promise((resolve) => {
+            const proc = spawn(this.dtlvPath, ['help'], { shell: true });
+            proc.on('close', (code) => resolve(code === 0));
+            proc.on('error', () => resolve(false));
+        });
     }
 
     /**
@@ -87,7 +86,7 @@ export class DtlvBridge {
         const info: DatabaseInfo = {
             path: resolvedPath,
             name: name,
-            exists: this.databaseExists(resolvedPath)
+            exists: true // We'll assume it exists when opened
         };
 
         this.openDatabases.set(resolvedPath, info);
@@ -110,17 +109,12 @@ export class DtlvBridge {
     }
 
     /**
-     * Check if a database exists
+     * Check if a database exists by trying to get its stats
      */
-    databaseExists(dbPath: string): boolean {
-        try {
-            const resolvedPath = this.resolvePath(dbPath);
-            // Try to get stats - if it works, db exists
-            const result = this.execDtlvSync(['stat', resolvedPath]);
-            return !result.includes('does not exist');
-        } catch {
-            return false;
-        }
+    async databaseExists(dbPath: string): Promise<boolean> {
+        const resolvedPath = this.resolvePath(dbPath);
+        const result = await this.runCode(resolvedPath, '(datalevin.core/schema conn)');
+        return result.success;
     }
 
     /**
@@ -129,60 +123,49 @@ export class DtlvBridge {
     async createDatabase(dbPath: string): Promise<QueryResult> {
         const resolvedPath = this.resolvePath(dbPath);
 
-        try {
-            // Create by running an empty transaction
-            const result = await this.execDtlv(['exec', resolvedPath, '[]']);
+        // Create by opening connection and closing it
+        const code = `
+            (let [conn (datalevin.core/get-conn "${this.escapeString(resolvedPath)}")]
+              (datalevin.core/close conn)
+              {:created true :path "${this.escapeString(resolvedPath)}"})
+        `.trim();
 
-            if (result.success) {
-                this.openDatabase(resolvedPath);
-            }
+        const result = await this.execDtlv(code);
 
-            return result;
-        } catch (error) {
-            return {
-                success: false,
-                error: error instanceof Error ? error.message : String(error)
-            };
+        if (result.success) {
+            this.openDatabase(resolvedPath);
         }
+
+        return result;
     }
 
     /**
      * Execute a Datalog query
      */
     async query(dbPath: string, queryStr: string): Promise<QueryResult> {
-        const resolvedPath = this.resolvePath(dbPath);
-
-        // Wrap query for dtlv exec format
-        const wrappedQuery = `(d/q '${queryStr} (d/db conn))`;
-
-        return this.execDtlv(['exec', resolvedPath, wrappedQuery]);
+        return this.runCode(dbPath, `(datalevin.core/q '${queryStr} @conn)`);
     }
 
     /**
      * Execute a query and return parsed results
      */
     async runQuery(dbPath: string, query: string, limit: number = 100): Promise<QueryResult> {
-        const resolvedPath = this.resolvePath(dbPath);
-
-        // Build the query with limit
-        const clojureCode = `
-            (let [results (d/q '${query} (d/db conn))]
+        const code = `
+            (let [results (datalevin.core/q '${query} @conn)]
               {:total (count results)
                :truncated (> (count results) ${limit})
                :results (vec (take ${limit} results))})
         `.trim();
 
-        return this.execDtlv(['exec', resolvedPath, clojureCode]);
+        return this.runCode(dbPath, code);
     }
 
     /**
      * Get database schema
      */
     async getSchema(dbPath: string): Promise<SchemaAttribute[]> {
-        const resolvedPath = this.resolvePath(dbPath);
-
         const code = `
-            (->> (d/schema (d/db conn))
+            (->> (datalevin.core/schema conn)
                  (map (fn [[attr props]]
                         {:attribute (str attr)
                          :valueType (some-> (:db/valueType props) name)
@@ -195,7 +178,7 @@ export class DtlvBridge {
                  vec)
         `.trim();
 
-        const result = await this.execDtlv(['exec', resolvedPath, code]);
+        const result = await this.runCode(dbPath, code);
 
         if (result.success && result.data) {
             return result.data as SchemaAttribute[];
@@ -208,20 +191,17 @@ export class DtlvBridge {
      * Get entity counts by namespace
      */
     async getEntityCounts(dbPath: string): Promise<Array<{namespace: string; count: number}>> {
-        const resolvedPath = this.resolvePath(dbPath);
-
         const code = `
-            (let [db (d/db conn)]
-              (->> (d/datoms db :eavt)
-                   (map #(namespace (:a %)))
-                   (remove nil?)
-                   frequencies
-                   (map (fn [[ns cnt]] {:namespace ns :count cnt}))
-                   (sort-by :namespace)
-                   vec))
+            (->> (datalevin.core/datoms @conn :eavt)
+                 (map #(namespace (:a %)))
+                 (remove nil?)
+                 frequencies
+                 (map (fn [[ns cnt]] {:namespace ns :count cnt}))
+                 (sort-by :namespace)
+                 vec)
         `.trim();
 
-        const result = await this.execDtlv(['exec', resolvedPath, code]);
+        const result = await this.runCode(dbPath, code);
 
         if (result.success && result.data) {
             return result.data as Array<{namespace: string; count: number}>;
@@ -234,13 +214,10 @@ export class DtlvBridge {
      * Get entity by ID
      */
     async getEntity(dbPath: string, entityId: number): Promise<QueryResult> {
-        const resolvedPath = this.resolvePath(dbPath);
-
         const code = `
-            (let [db (d/db conn)
-                  entity (d/entity db ${entityId})
-                  attrs (->> (keys entity)
-                             (map (fn [k] [(str k) (let [v (get entity k)]
+            (let [ent (datalevin.core/entity @conn ${entityId})
+                  attrs (->> (keys ent)
+                             (map (fn [k] [(str k) (let [v (get ent k)]
                                                      (if (instance? datalevin.entity.Entity v)
                                                        (:db/id v)
                                                        v))]))
@@ -248,23 +225,21 @@ export class DtlvBridge {
               {:eid ${entityId} :attributes attrs})
         `.trim();
 
-        return this.execDtlv(['exec', resolvedPath, code]);
+        return this.runCode(dbPath, code);
     }
 
     /**
      * Execute a transaction
      */
     async transact(dbPath: string, txData: string): Promise<QueryResult> {
-        const resolvedPath = this.resolvePath(dbPath);
-
         const code = `
-            (let [result (d/transact! conn ${txData})]
+            (let [result (datalevin.core/transact! conn ${txData})]
               {:tx-id (:max-tx result)
                :tempids (:tempids result)
                :datoms-count (count (:tx-data result))})
         `.trim();
 
-        return this.execDtlv(['exec', resolvedPath, code]);
+        return this.runCode(dbPath, code);
     }
 
     /**
@@ -279,8 +254,6 @@ export class DtlvBridge {
         fulltext?: boolean;
         isComponent?: boolean;
     }): Promise<QueryResult> {
-        const resolvedPath = this.resolvePath(dbPath);
-
         let schemaMap = `{:db/ident :${attr.attribute}
                           :db/valueType :db.type/${attr.valueType}
                           :db/cardinality :db.cardinality/${attr.cardinality}`;
@@ -292,23 +265,21 @@ export class DtlvBridge {
 
         schemaMap += '}';
 
-        return this.transact(resolvedPath, `[${schemaMap}]`);
+        return this.transact(dbPath, `[${schemaMap}]`);
     }
 
     /**
      * Get sample values for an attribute
      */
     async getSampleValues(dbPath: string, attribute: string, limit: number = 10): Promise<unknown[]> {
-        const resolvedPath = this.resolvePath(dbPath);
-
         const code = `
-            (->> (d/datoms (d/db conn) :aevt :${attribute})
+            (->> (datalevin.core/datoms @conn :aevt :${attribute})
                  (take ${limit})
                  (map :v)
                  vec)
         `.trim();
 
-        const result = await this.execDtlv(['exec', resolvedPath, code]);
+        const result = await this.runCode(dbPath, code);
 
         if (result.success && result.data) {
             return result.data as unknown[];
@@ -321,17 +292,15 @@ export class DtlvBridge {
      * Get all attributes for autocomplete
      */
     async getAttributes(dbPath: string): Promise<string[]> {
-        const resolvedPath = this.resolvePath(dbPath);
-
         const code = `
-            (->> (d/schema (d/db conn))
+            (->> (datalevin.core/schema conn)
                  keys
                  (map str)
                  sort
                  vec)
         `.trim();
 
-        const result = await this.execDtlv(['exec', resolvedPath, code]);
+        const result = await this.runCode(dbPath, code);
 
         if (result.success && result.data) {
             return result.data as string[];
@@ -344,31 +313,45 @@ export class DtlvBridge {
      * Get database stats
      */
     async getStats(dbPath: string): Promise<QueryResult> {
-        const resolvedPath = this.resolvePath(dbPath);
-        return this.execDtlv(['stat', resolvedPath]);
+        const code = `
+            {:datom-count (count (datalevin.core/datoms @conn :eavt))
+             :schema-count (count (datalevin.core/schema conn))}
+        `.trim();
+
+        return this.runCode(dbPath, code);
     }
 
     /**
-     * Execute dtlv command asynchronously
+     * Run code with a database connection
+     * This wraps the code with connection setup/teardown
      */
-    private execDtlv(args: string[]): Promise<QueryResult> {
+    private async runCode(dbPath: string, code: string): Promise<QueryResult> {
+        const resolvedPath = this.resolvePath(dbPath);
+
+        // Use fully qualified names to avoid shadowing issues in dtlv's sci environment
+        const wrappedCode = `
+            (let [conn (datalevin.core/get-conn "${this.escapeString(resolvedPath)}")]
+              (try
+                ${code}
+                (finally (datalevin.core/close conn))))
+        `.trim();
+
+        return this.execDtlv(wrappedCode);
+    }
+
+    /**
+     * Execute dtlv command with code
+     */
+    private execDtlv(code: string): Promise<QueryResult> {
         return new Promise((resolve) => {
             let stdout = '';
             let stderr = '';
 
-            // Quote arguments that contain paths or code
-            const quotedArgs = args.map((arg, index) => {
-                // First arg is the command (exec, stat, etc), don't quote
-                if (index === 0) { return arg; }
-                // Quote paths and code
-                if (arg.includes('/') || arg.includes(' ') || arg.startsWith('(') || arg.startsWith('[') || arg.startsWith('{')) {
-                    return `"${arg.replace(/"/g, '\\"')}"`;
-                }
-                return arg;
-            });
+            // Use single quotes for shell, escape any single quotes in code
+            const escapedCode = code.replace(/'/g, "'\"'\"'");
+            const fullCommand = `${this.dtlvPath} exec '${escapedCode}'`;
 
-            const proc = spawn(this.dtlvPath, quotedArgs, {
-                shell: true,
+            const proc = spawn('sh', ['-c', fullCommand], {
                 env: { ...process.env }
             });
 
@@ -418,21 +401,10 @@ export class DtlvBridge {
     }
 
     /**
-     * Execute dtlv command synchronously
+     * Escape string for use in Clojure code
      */
-    private execDtlvSync(args: string[]): string {
-        // Quote arguments that contain paths
-        const quotedArgs = args.map((arg, index) => {
-            if (index === 0) { return arg; }
-            if (arg.includes('/') || arg.includes(' ')) {
-                return `"${arg.replace(/"/g, '\\"')}"`;
-            }
-            return arg;
-        });
-        return execSync(`${this.dtlvPath} ${quotedArgs.join(' ')}`, {
-            encoding: 'utf8',
-            stdio: 'pipe'
-        });
+    private escapeString(str: string): string {
+        return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     }
 
     /**

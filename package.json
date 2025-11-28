@@ -2,7 +2,7 @@
   "name": "levin",
   "displayName": "Levin",
   "description": "Browse, query, and manage Datalevin databases in VS Code",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "KayBosompem",
   "author": {
     "name": "Kay Bosompem"

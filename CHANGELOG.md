@@ -5,6 +5,16 @@ All notable changes to the Levin extension will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2024-11-28
+
+### Fixed
+
+- Fix dtlv exec command format - now properly wraps code with connection setup
+- Use fully qualified `datalevin.core/` function names to avoid namespace shadowing in dtlv's sci environment
+- Database creation now works correctly
+
+---
+
 ## [0.2.1] - 2024-11-28
 
 ### Fixed
