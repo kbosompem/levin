@@ -2,7 +2,7 @@
   "name": "levin",
   "displayName": "Levin",
   "description": "Browse, query, and manage Datalevin databases in VS Code",
-  "version": "0.2.4",
+  "version": "0.2.12",
   "publisher": "KayBosompem",
   "author": {
     "name": "Kay Bosompem"
@@ -86,6 +86,26 @@
       {
         "command": "levin.showTransactionPanel",
         "title": "Levin: Open Transaction Panel"
+      },
+      {
+        "command": "levin.copyQueryAsClojure",
+        "title": "Levin: Copy Query as Clojure"
+      },
+      {
+        "command": "levin.runSavedQuery",
+        "title": "Run Query"
+      },
+      {
+        "command": "levin.deleteSavedQuery",
+        "title": "Delete Query"
+      },
+      {
+        "command": "levin.openSavedQuery",
+        "title": "Open in Editor"
+      },
+      {
+        "command": "levin.importData",
+        "title": "Levin: Import Data"
       }
     ],
     "viewsContainers": {
@@ -143,6 +163,11 @@
           "group": "navigation"
         },
         {
+          "command": "levin.importData",
+          "when": "viewItem == database",
+          "group": "navigation"
+        },
+        {
           "command": "levin.closeDatabase",
           "when": "viewItem == database",
           "group": "2_close"
@@ -151,6 +176,16 @@
           "command": "levin.copyPath",
           "when": "viewItem == database",
           "group": "3_copy"
+        },
+        {
+          "command": "levin.openSavedQuery",
+          "when": "viewItem == savedQuery",
+          "group": "navigation"
+        },
+        {
+          "command": "levin.deleteSavedQuery",
+          "when": "viewItem == savedQuery",
+          "group": "2_delete"
         }
       ]
     },

@@ -192,8 +192,9 @@ export class DtlvBridge {
      */
     async getEntityCounts(dbPath: string): Promise<Array<{namespace: string; count: number}>> {
         const code = `
-            (->> (datalevin.core/datoms @conn :eavt)
-                 (map #(namespace (:a %)))
+            (->> (datalevin.core/q '[:find ?a :where [_ ?a _]] @conn)
+                 (map first)
+                 (map namespace)
                  (remove nil?)
                  frequencies
                  (map (fn [[ns cnt]] {:namespace ns :count cnt}))
@@ -214,15 +215,10 @@ export class DtlvBridge {
      * Get entity by ID
      */
     async getEntity(dbPath: string, entityId: number): Promise<QueryResult> {
+        // Use pull API instead of entity API to avoid sci environment issues
         const code = `
-            (let [ent (datalevin.core/entity @conn ${entityId})
-                  attrs (->> (keys ent)
-                             (map (fn [k] [(str k) (let [v (get ent k)]
-                                                     (if (instance? datalevin.entity.Entity v)
-                                                       (:db/id v)
-                                                       v))]))
-                             (into {}))]
-              {:eid ${entityId} :attributes attrs})
+            (let [result (datalevin.core/pull @conn '[*] ${entityId})]
+              {:eid ${entityId} :attributes (dissoc result :db/id)})
         `.trim();
 
         return this.runCode(dbPath, code);
@@ -269,13 +265,74 @@ export class DtlvBridge {
     }
 
     /**
+     * Convert Datomic-style schema (map format) to Datalevin-style schema (vector format)
+     * Datomic: {:movie/title {:db/valueType :db.type/string ...}}
+     * Datalevin: [{:db/ident :movie/title :db/valueType :db.type/string ...}]
+     */
+    async convertDatomicSchema(_dbPath: string, schemaEdn: string): Promise<QueryResult> {
+        // Use Clojure to convert the schema format
+        const code = `
+            (let [datomic-schema ${schemaEdn}
+                  datalevin-schema (->> datomic-schema
+                                        (map (fn [[attr props]]
+                                               (-> props
+                                                   (assoc :db/ident attr)
+                                                   (dissoc :db.install/_attribute))))
+                                        vec)]
+              (pr-str datalevin-schema))
+        `.trim();
+
+        return this.execDtlv(code);
+    }
+
+    /**
+     * Import data with proper temp ID resolution.
+     * Datalevin requires schema to be known at connection time for temp IDs to resolve.
+     * This method queries schema, rebuilds it in the format get-conn expects, then transacts data.
+     */
+    async importWithTempIds(dbPath: string, dataEdn: string): Promise<QueryResult> {
+        const resolvedPath = this.resolvePath(dbPath);
+
+        // Query schema from database, rebuild in get-conn format, then transact data
+        const code = `
+            (let [;; Get schema info via query (more reliable than schema fn)
+                  conn1 (datalevin.core/get-conn "${this.escapeString(resolvedPath)}")
+                  db @conn1
+                  ;; Query all schema attributes with their properties
+                  schema-data (datalevin.core/q '[:find ?attr ?prop ?val
+                                                  :where
+                                                  [?e :db/ident ?attr]
+                                                  [?e ?prop ?val]
+                                                  [(not= ?prop :db/ident)]
+                                                  [(not= ?prop :db/id)]
+                                                  [(not= ?prop :db/aid)]]
+                                                db)
+                  ;; Build schema map: {:attr {:db/valueType :db.type/xxx ...}}
+                  schema-map (reduce (fn [m [attr prop val]]
+                                       (assoc-in m [attr prop] val))
+                                     {}
+                                     schema-data)
+                  _ (datalevin.core/close conn1)
+                  ;; Reopen with schema for proper temp ID resolution
+                  conn2 (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" schema-map)
+                  result (datalevin.core/transact! conn2 ${dataEdn})]
+              (datalevin.core/close conn2)
+              {:tx-id (:max-tx result)
+               :tempids (:tempids result)
+               :datoms-count (count (:tx-data result))})
+        `.trim();
+
+        return this.execDtlv(code);
+    }
+
+    /**
      * Get sample values for an attribute
      */
     async getSampleValues(dbPath: string, attribute: string, limit: number = 10): Promise<unknown[]> {
         const code = `
-            (->> (datalevin.core/datoms @conn :aevt :${attribute})
+            (->> (datalevin.core/q '[:find ?v :where [_ :${attribute} ?v]] @conn)
+                 (map first)
                  (take ${limit})
-                 (map :v)
                  vec)
         `.trim();
 
@@ -314,7 +371,7 @@ export class DtlvBridge {
      */
     async getStats(dbPath: string): Promise<QueryResult> {
         const code = `
-            {:datom-count (count (datalevin.core/datoms @conn :eavt))
+            {:datom-count (count (datalevin.core/q '[:find ?e ?a ?v :where [?e ?a ?v]] @conn))
              :schema-count (count (datalevin.core/schema conn))}
         `.trim();
 

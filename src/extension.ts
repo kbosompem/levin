@@ -166,16 +166,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Close Database command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.closeDatabase', async (item?: DatabaseTreeItem) => {
-            let dbPath: string | undefined;
-            if (item) {
-                const anyItem = item as unknown as Record<string, unknown>;
-                dbPath = item.dbPath as string
-                    || anyItem.description as string
-                    || anyItem.tooltip as string;
-            }
-            if (!dbPath) {
-                dbPath = await selectDatabase();
-            }
+            const dbPath = extractDbPath(item) || await selectDatabase();
             if (dbPath) {
                 dtlvBridge.closeDatabase(dbPath);
                 removeFromRecentDatabases(context, dbPath);
@@ -188,16 +179,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // New Query command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.newQuery', async (item?: DatabaseTreeItem) => {
-            let dbPath: string | undefined;
-            if (item) {
-                const anyItem = item as unknown as Record<string, unknown>;
-                dbPath = item.dbPath as string
-                    || anyItem.description as string
-                    || anyItem.tooltip as string;
-            }
-            if (!dbPath) {
-                dbPath = await selectDatabase();
-            }
+            const dbPath = extractDbPath(item) || await selectDatabase();
             if (dbPath) {
                 await createNewQuery(dbPath);
             }
@@ -267,20 +249,12 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Edit Schema command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.editSchema', async (item?: DatabaseTreeItem) => {
-            // Handle both DatabaseTreeItem and plain objects from context menu
-            let dbPath: string | undefined;
-            if (item) {
-                // Try various properties - VS Code may serialize differently
-                const anyItem = item as unknown as Record<string, unknown>;
-                dbPath = item.dbPath as string
-                    || anyItem.description as string
-                    || anyItem.tooltip as string;
-            }
-            if (!dbPath) {
-                dbPath = await selectDatabase();
-            }
-            if (dbPath) {
-                await showSchemaEditor(context, dbPath);
+            const dbPath = extractDbPath(item);
+            const finalDbPath = dbPath || await selectDatabase();
+            if (finalDbPath) {
+                await showSchemaEditor(context, finalDbPath);
+            } else {
+                vscode.window.showErrorMessage('Could not determine database path');
             }
         })
     );
@@ -288,18 +262,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Show Transaction Panel command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.showTransactionPanel', async (item?: DatabaseTreeItem) => {
-            // Handle both DatabaseTreeItem and plain objects from context menu
-            let dbPath: string | undefined;
-            if (item) {
-                // Try various properties - VS Code may serialize differently
-                const anyItem = item as unknown as Record<string, unknown>;
-                dbPath = item.dbPath as string
-                    || anyItem.description as string
-                    || anyItem.tooltip as string;
-            }
-            if (!dbPath) {
-                dbPath = await selectDatabase();
-            }
+            const dbPath = extractDbPath(item) || await selectDatabase();
             if (dbPath) {
                 await showTransactionPanel(context, dbPath);
             }
@@ -333,10 +296,196 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
     // Delete Saved Query command
     context.subscriptions.push(
-        vscode.commands.registerCommand('levin.deleteSavedQuery', async (name: string) => {
-            await savedQueriesProvider.removeQuery(name);
+        vscode.commands.registerCommand('levin.deleteSavedQuery', async (item?: { savedQuery?: { name: string } }) => {
+            const name = item?.savedQuery?.name;
+            if (name) {
+                await savedQueriesProvider.removeQuery(name);
+                vscode.window.showInformationMessage(`Deleted query "${name}"`);
+            }
         })
     );
+
+    // Open Saved Query in editor
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.openSavedQuery', async (item?: { savedQuery?: { name: string; query: string } }) => {
+            const queryText = item?.savedQuery?.query;
+            if (queryText) {
+                const doc = await vscode.workspace.openTextDocument({
+                    language: 'datalevin-query',
+                    content: queryText
+                });
+                await vscode.window.showTextDocument(doc);
+            }
+        })
+    );
+
+    // Copy Query as Clojure
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.copyQueryAsClojure', async (_line?: number) => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) { return; }
+
+            const queryText = editor.document.getText();
+
+            // Parse the query to extract components
+            const dbMatch = queryText.match(/:db\s+"([^"]+)"/);
+            const dbPath = dbMatch?.[1] || '/path/to/database';
+
+            const queryPortionMatch = queryText.match(/:query\s+(\[[\s\S]*?\])(?=\s*:|\s*\})/);
+            const queryPortion = queryPortionMatch?.[1] || '[:find ?e :where [?e :db/id _]]';
+
+            // Generate Clojure code
+            const clojureCode = `(require '[datalevin.core :as d])
+
+(def conn (d/get-conn "${dbPath}"))
+
+(d/q '${queryPortion}
+     @conn)
+
+(d/close conn)`;
+
+            await vscode.env.clipboard.writeText(clojureCode);
+            vscode.window.showInformationMessage('Query copied as Clojure code');
+        })
+    );
+
+    // Import Data command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.importData', async (item?: DatabaseTreeItem) => {
+            const dbPath = extractDbPath(item) || await selectDatabase();
+            if (!dbPath) { return; }
+
+            const source = await vscode.window.showQuickPick([
+                { label: '$(file) Import from File', value: 'file' },
+                { label: '$(globe) Import from URL', value: 'url' }
+            ], {
+                placeHolder: 'Select import source'
+            });
+
+            if (!source) { return; }
+
+            let ednContent: string | undefined;
+
+            if (source.value === 'file') {
+                const files = await vscode.window.showOpenDialog({
+                    canSelectFiles: true,
+                    canSelectMany: false,
+                    filters: { 'EDN Files': ['edn'], 'All Files': ['*'] },
+                    title: 'Select EDN file to import'
+                });
+
+                if (!files || files.length === 0) { return; }
+
+                try {
+                    const fileContent = await vscode.workspace.fs.readFile(files[0]);
+                    ednContent = Buffer.from(fileContent).toString('utf-8');
+                } catch (error) {
+                    vscode.window.showErrorMessage(`Failed to read file: ${error}`);
+                    return;
+                }
+            } else {
+                const url = await vscode.window.showInputBox({
+                    prompt: 'Enter URL to EDN file',
+                    placeHolder: 'https://example.com/data.edn',
+                    validateInput: (value) => {
+                        if (!value) { return 'URL is required'; }
+                        if (!value.startsWith('http://') && !value.startsWith('https://')) {
+                            return 'URL must start with http:// or https://';
+                        }
+                        return null;
+                    }
+                });
+
+                if (!url) { return; }
+
+                try {
+                    ednContent = await fetchUrl(url);
+                } catch (error) {
+                    vscode.window.showErrorMessage(`Failed to fetch URL: ${error}`);
+                    return;
+                }
+            }
+
+            if (!ednContent || ednContent.trim().length === 0) {
+                vscode.window.showErrorMessage('No content to import');
+                return;
+            }
+
+            // Import the data
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: 'Importing data...',
+                cancellable: false
+            }, async () => {
+                // Check content type and handle appropriately
+                const trimmed = ednContent!.trim();
+                let result;
+
+                // If it starts with { and contains :db/valueType, it's likely Datomic schema format
+                if (trimmed.startsWith('{') && trimmed.includes(':db/valueType')) {
+                    // Convert Datomic map schema to Datalevin vector schema
+                    const convertResult = await dtlvBridge.convertDatomicSchema(dbPath, trimmed);
+                    if (convertResult.success && convertResult.data) {
+                        result = await dtlvBridge.transact(dbPath, convertResult.data as string);
+                    } else {
+                        vscode.window.showErrorMessage(`Schema conversion failed: ${convertResult.error}`);
+                        return;
+                    }
+                }
+                // If it's a vector with :db/id and negative numbers, it's data with temp IDs
+                else if (trimmed.startsWith('[') && trimmed.includes(':db/id') && /:db\/id\s+-\d/.test(trimmed)) {
+                    // Use special import method that reopens connection with schema
+                    result = await dtlvBridge.importWithTempIds(dbPath, trimmed);
+                }
+                // Otherwise, normal transact
+                else {
+                    result = await dtlvBridge.transact(dbPath, trimmed);
+                }
+
+                if (result.success) {
+                    const data = result.data as { datomsCount?: number };
+                    vscode.window.showInformationMessage(
+                        `Import successful! ${data.datomsCount || 0} datoms added.`
+                    );
+                    databaseTreeProvider.refresh();
+                } else {
+                    vscode.window.showErrorMessage(`Import failed: ${result.error}`);
+                }
+            });
+        })
+    );
+}
+
+/**
+ * Fetch content from a URL
+ */
+async function fetchUrl(url: string): Promise<string> {
+    const https = await import('https');
+    const http = await import('http');
+
+    return new Promise((resolve, reject) => {
+        const client = url.startsWith('https') ? https : http;
+
+        client.get(url, (res) => {
+            // Handle redirects
+            if (res.statusCode === 301 || res.statusCode === 302) {
+                if (res.headers.location) {
+                    fetchUrl(res.headers.location).then(resolve).catch(reject);
+                    return;
+                }
+            }
+
+            if (res.statusCode !== 200) {
+                reject(new Error(`HTTP ${res.statusCode}`));
+                return;
+            }
+
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => resolve(data));
+            res.on('error', reject);
+        }).on('error', reject);
+    });
 }
 
 function openDatabase(context: vscode.ExtensionContext, dbPath: string): void {
@@ -377,6 +526,39 @@ function removeFromRecentDatabases(context: vscode.ExtensionContext, dbPath: str
     const recent = config.get<string[]>('recentDatabases', []);
     const updated = recent.filter(p => p !== dbPath);
     config.update('recentDatabases', updated, vscode.ConfigurationTarget.Global);
+}
+
+/**
+ * Extract dbPath from a tree item passed by VS Code context menu.
+ * VS Code may serialize tree items differently, so we check multiple properties.
+ */
+function extractDbPath(item?: DatabaseTreeItem): string | undefined {
+    if (!item) { return undefined; }
+
+    const anyItem = item as unknown as Record<string, unknown>;
+
+    // Direct property (if preserved)
+    if (item.dbPath) { return item.dbPath; }
+
+    // From id property (format: "itemType:/path/to/db")
+    if (typeof anyItem.id === 'string') {
+        const colonIndex = anyItem.id.indexOf(':');
+        if (colonIndex > 0) {
+            return anyItem.id.slice(colonIndex + 1);
+        }
+    }
+
+    // From description (set for database items)
+    if (typeof anyItem.description === 'string' && anyItem.description.startsWith('/')) {
+        return anyItem.description;
+    }
+
+    // From tooltip
+    if (typeof anyItem.tooltip === 'string' && anyItem.tooltip.startsWith('/')) {
+        return anyItem.tooltip;
+    }
+
+    return undefined;
 }
 
 async function selectDatabase(): Promise<string | undefined> {

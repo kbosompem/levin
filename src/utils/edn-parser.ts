@@ -153,13 +153,14 @@ function parseString(input: string, ctx: ParseContext): string {
 }
 
 function parseKeyword(input: string, ctx: ParseContext): string {
-    const start = ctx.pos;
     ctx.pos++; // Skip :
+    const start = ctx.pos;
 
     while (ctx.pos < input.length && isSymbolChar(input[ctx.pos])) {
         ctx.pos++;
     }
 
+    // Return keyword without the leading colon
     return input.slice(start, ctx.pos);
 }
 

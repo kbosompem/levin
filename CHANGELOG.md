@@ -5,6 +5,86 @@ All notable changes to the Levin extension will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.12] - 2024-11-28
+
+### Fixed
+
+- **Tree view expansion** - Schema and Entities folders now properly expand to show children
+  - Tree items are stored in a Map and looked up by ID for reliable expansion
+- **Temp ID resolution (v2)** - Properly fix Datomic-style data imports
+  - Query schema attributes with full type info via Datalog query
+  - Rebuild schema map in correct format for `get-conn`
+  - Entity references like `:movie/director -100` now properly resolve to real entity IDs
+
+---
+
+## [0.2.11] - 2024-11-28
+
+### Fixed
+
+- **Temp ID resolution** - Fix Datomic-style data imports with negative temp IDs (`{:db/id -100 ...}`)
+  - Datalevin requires schema at connection time for ref resolution
+  - Import now reopens connection with schema before transacting data with temp IDs
+  - Entity references like `:movie/director -100` now properly resolve to real entity IDs
+
+---
+
+## [0.2.9] - 2024-11-28
+
+### Added
+
+- Auto-convert Datomic-style schema to Datalevin format during import
+  - Datomic map format: `{:movie/title {:db/valueType :db.type/string ...}}`
+  - Automatically converts to Datalevin vector format: `[{:db/ident :movie/title ...}]`
+  - Removes incompatible `:db.install/_attribute` entries
+
+---
+
+## [0.2.8] - 2024-11-28
+
+### Added
+
+- **Import Data command** - Import schema and data from local EDN files or URLs
+  - Right-click database → "Levin: Import Data"
+  - Or use Command Palette: "Levin: Import Data"
+  - Supports both local `.edn` files and remote URLs
+  - Handles HTTP redirects automatically
+
+---
+
+## [0.2.7] - 2024-11-28
+
+### Fixed
+
+- Fix tree view expansion: Schema and Entities folders now properly expand to show children
+- Extract itemType and dbPath from TreeItem id property for reliable tree navigation
+- Fix entity inspector: Use `pull` API instead of `entity` API to avoid sci environment issues
+- Entity hyperlinks in query results now work correctly
+
+---
+
+## [0.2.6] - 2024-11-28
+
+### Fixed
+
+- Fix EDN parser to strip leading colon from keywords when used as map keys
+- Entity counts and namespaces now display correctly (was showing NaN/undefined)
+
+---
+
+## [0.2.5] - 2024-11-28
+
+### Fixed
+
+- Fix context menu commands (Edit Schema, Transaction Panel, New Query, Close Database) by reliably extracting dbPath from VS Code's serialized tree items
+- Store dbPath in TreeItem `id` property which VS Code preserves during serialization
+- Add `extractDbPath` helper function that checks multiple properties for robustness
+- Fix entity counts using query instead of datoms API
+- Add missing `copyQueryAsClojure` command
+- Add saved query context menu commands (Open in Editor, Delete Query)
+
+---
+
 ## [0.2.4] - 2024-11-28
 
 ### Fixed

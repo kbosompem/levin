@@ -13,6 +13,10 @@ export class DatabaseTreeItem extends vscode.TreeItem {
     ) {
         super(label, collapsibleState);
         this.contextValue = itemType;
+        // Set id to include dbPath - this is reliably preserved by VS Code
+        if (dbPath) {
+            this.id = `${itemType}:${dbPath}`;
+        }
         this.setIcon();
         this.setTooltip();
     }
@@ -69,11 +73,15 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     private schemaCache: Map<string, SchemaAttribute[]> = new Map();
     private entityCountCache: Map<string, Array<{namespace: string; count: number}>> = new Map();
 
+    // Store tree items by ID for reliable lookup
+    private treeItemsById: Map<string, DatabaseTreeItem> = new Map();
+
     constructor(private dtlvBridge: DtlvBridge) {}
 
     refresh(): void {
         this.schemaCache.clear();
         this.entityCountCache.clear();
+        this.treeItemsById.clear();
         this._onDidChangeTreeData.fire();
     }
 
@@ -87,18 +95,51 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
             return this.getRootItems();
         }
 
-        switch (element.itemType) {
+        // Look up the original tree item by ID
+        const id = typeof element.id === 'string' ? element.id : undefined;
+        const storedItem = id ? this.treeItemsById.get(id) : undefined;
+
+        // Use stored item if available, otherwise try to extract from element
+        const itemType = storedItem?.itemType || element.itemType || element.contextValue as TreeItemType;
+        const dbPath = storedItem?.dbPath || element.dbPath || this.extractDbPathFromId(id);
+
+        console.log('getChildren:', { id, itemType, dbPath, hasStoredItem: !!storedItem });
+
+        if (!dbPath) {
+            console.log('No dbPath found');
+            return [];
+        }
+
+        switch (itemType) {
             case 'database':
-                return this.getDatabaseChildren(element.dbPath!);
+                return this.getDatabaseChildren(dbPath);
             case 'schema-folder':
-                return this.getSchemaItems(element.dbPath!);
+                return this.getSchemaItems(dbPath);
             case 'entities-folder':
-                return this.getEntityNamespaces(element.dbPath!);
+                return this.getEntityNamespaces(dbPath);
             case 'queries-folder':
-                return []; // TODO: Implement saved queries per database
+                return [];
             default:
+                console.log('No match for itemType:', itemType);
                 return [];
         }
+    }
+
+    private extractDbPathFromId(id?: string): string | undefined {
+        if (!id) return undefined;
+        // ID format: "itemType:dbPath"
+        const colonIndex = id.indexOf(':');
+        if (colonIndex > 0) {
+            return id.slice(colonIndex + 1);
+        }
+        return undefined;
+    }
+
+    private registerItem(item: DatabaseTreeItem): DatabaseTreeItem {
+        if (item.id) {
+            this.treeItemsById.set(item.id, item);
+        }
+        return item;
     }
 
     private async getRootItems(): Promise<DatabaseTreeItem[]> {
@@ -113,7 +154,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
                 'database',
                 db.path
             );
-            items.push(item);
+            items.push(this.registerItem(item));
         }
 
         // Add "Open Database" item
@@ -135,12 +176,13 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         const items: DatabaseTreeItem[] = [];
 
         // Schema folder
-        items.push(new DatabaseTreeItem(
+        const schemaFolder = new DatabaseTreeItem(
             'Schema',
             vscode.TreeItemCollapsibleState.Collapsed,
             'schema-folder',
             dbPath
-        ));
+        );
+        items.push(this.registerItem(schemaFolder));
 
         // Entities folder - try to get counts
         try {
@@ -153,15 +195,16 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
                 'entities-folder',
                 dbPath
             );
-            items.push(entitiesItem);
+            items.push(this.registerItem(entitiesItem));
         } catch {
             // If we can't get counts, still show folder
-            items.push(new DatabaseTreeItem(
+            const entitiesItem = new DatabaseTreeItem(
                 'Entities',
                 vscode.TreeItemCollapsibleState.Collapsed,
                 'entities-folder',
                 dbPath
-            ));
+            );
+            items.push(this.registerItem(entitiesItem));
         }
 
         return items;
@@ -179,7 +222,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
                     dbPath,
                     attr
                 );
-                return item;
+                return this.registerItem(item);
             });
         } catch (error) {
             console.error('Failed to load schema:', error);
@@ -199,7 +242,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
                     dbPath,
                     ec
                 );
-                return item;
+                return this.registerItem(item);
             });
         } catch (error) {
             console.error('Failed to load entity counts:', error);
