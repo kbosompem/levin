@@ -137,9 +137,22 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
 
     private registerItem(item: DatabaseTreeItem): DatabaseTreeItem {
         if (item.id) {
+            // Check for conflicts and warn (but still register)
+            if (this.treeItemsById.has(item.id)) {
+                console.log(`TreeItem ID ${item.id} already registered, overwriting`);
+            }
             this.treeItemsById.set(item.id, item);
         }
         return item;
+    }
+
+    // Clear items for a specific database path
+    clearItemsForDb(dbPath: string): void {
+        for (const [id, _item] of this.treeItemsById) {
+            if (id.includes(dbPath)) {
+                this.treeItemsById.delete(id);
+            }
+        }
     }
 
     private async getRootItems(): Promise<DatabaseTreeItem[]> {

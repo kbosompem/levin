@@ -161,21 +161,36 @@ export class DtlvBridge {
     }
 
     /**
-     * Get database schema
+     * Get database schema by querying actual schema datoms
+     * The datalevin.core/schema fn only returns {:db/aid N}, so we query the schema entities directly
      */
     async getSchema(dbPath: string): Promise<SchemaAttribute[]> {
         const code = `
-            (->> (datalevin.core/schema conn)
-                 (map (fn [[attr props]]
-                        {:attribute (str attr)
-                         :valueType (some-> (:db/valueType props) name)
-                         :cardinality (some-> (:db/cardinality props) name)
-                         :unique (some-> (:db/unique props) name)
-                         :index (:db/index props)
-                         :fulltext (:db/fulltext props)
-                         :isComponent (:db/isComponent props)}))
-                 (sort-by :attribute)
-                 vec)
+            (let [db @conn
+                  ;; Query all schema attributes with their properties
+                  schema-data (datalevin.core/q '[:find ?attr ?prop ?val
+                                                  :where
+                                                  [?e :db/ident ?attr]
+                                                  [?e ?prop ?val]
+                                                  [(not= ?prop :db/id)]
+                                                  [(not= ?prop :db/aid)]]
+                                                db)
+                  ;; Group by attribute
+                  grouped (reduce (fn [m [attr prop val]]
+                                    (assoc-in m [attr prop] val))
+                                  {}
+                                  schema-data)]
+              (->> grouped
+                   (map (fn [[attr props]]
+                          {:attribute (str attr)
+                           :valueType (some-> (:db/valueType props) name)
+                           :cardinality (some-> (:db/cardinality props) name)
+                           :unique (some-> (:db/unique props) name)
+                           :index (:db/index props)
+                           :fulltext (:db/fulltext props)
+                           :isComponent (:db/isComponent props)}))
+                   (sort-by :attribute)
+                   vec))
         `.trim();
 
         const result = await this.runCode(dbPath, code);
@@ -265,21 +280,28 @@ export class DtlvBridge {
     }
 
     /**
-     * Convert Datomic-style schema (map format) to Datalevin-style schema (vector format)
+     * Convert and transact Datomic-style schema directly
      * Datomic: {:movie/title {:db/valueType :db.type/string ...}}
-     * Datalevin: [{:db/ident :movie/title :db/valueType :db.type/string ...}]
+     * Converts and transacts as: [{:db/ident :movie/title :db/valueType :db.type/string ...}]
      */
-    async convertDatomicSchema(_dbPath: string, schemaEdn: string): Promise<QueryResult> {
-        // Use Clojure to convert the schema format
+    async transactDatomicSchema(dbPath: string, schemaEdn: string): Promise<QueryResult> {
+        const resolvedPath = this.resolvePath(dbPath);
+
+        // Convert and transact in one step to avoid string escaping issues
         const code = `
-            (let [datomic-schema ${schemaEdn}
+            (let [conn (datalevin.core/get-conn "${this.escapeString(resolvedPath)}")
+                  datomic-schema ${schemaEdn}
                   datalevin-schema (->> datomic-schema
                                         (map (fn [[attr props]]
                                                (-> props
                                                    (assoc :db/ident attr)
                                                    (dissoc :db.install/_attribute))))
-                                        vec)]
-              (pr-str datalevin-schema))
+                                        vec)
+                  result (datalevin.core/transact! conn datalevin-schema)]
+              (datalevin.core/close conn)
+              {:tx-id (:max-tx result)
+               :datoms-count (count (:tx-data result))
+               :schema-count (count datalevin-schema)})
         `.trim();
 
         return this.execDtlv(code);

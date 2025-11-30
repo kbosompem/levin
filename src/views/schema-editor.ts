@@ -270,17 +270,20 @@ export class SchemaEditor {
                 <tr>
                     <th>Attribute</th>
                     <th>Type</th>
-                    <th>Properties</th>
+                    <th>Cardinality</th>
+                    <th>Unique</th>
+                    <th>Other</th>
                 </tr>
             </thead>
             <tbody>
                 ${this.schema.map(attr => `
                     <tr data-attribute="${this.escapeHtml(attr.attribute)}">
                         <td><code>${this.escapeHtml(attr.attribute)}</code></td>
-                        <td>${attr.valueType || 'unknown'}, ${attr.cardinality || 'one'}</td>
+                        <td>${attr.valueType || '-'}</td>
+                        <td>${attr.cardinality || '-'}</td>
+                        <td>${attr.unique || '-'}</td>
                         <td>
                             ${attr.index ? '<span class="tag">indexed</span>' : ''}
-                            ${attr.unique ? `<span class="tag">${attr.unique}</span>` : ''}
                             ${attr.fulltext ? '<span class="tag">fulltext</span>' : ''}
                             ${attr.isComponent ? '<span class="tag">component</span>' : ''}
                         </td>

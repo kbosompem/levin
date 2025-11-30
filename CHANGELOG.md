@@ -5,6 +5,25 @@ All notable changes to the Levin extension will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.13] - 2024-11-29
+
+### Fixed
+
+- **Schema display** - Schema attributes now show correct type, cardinality, and uniqueness
+  - Fixed `getSchema` to query actual schema datoms instead of using `datalevin.core/schema`
+  - The schema function only returns `{:db/aid N}`, not full type info
+- **Datomic schema import** - Fixed schema import bug where data was stored incorrectly
+  - `transactDatomicSchema` now converts and transacts in one step
+  - Avoids string escaping issues with the previous `convertDatomicSchema` approach
+
+### Changed
+
+- **Schema editor** - Improved table with separate columns
+  - Attribute, Type, Cardinality, Unique, and Other (indexed/fulltext/component)
+  - Clearer display of schema properties
+
+---
+
 ## [0.2.12] - 2024-11-28
 
 ### Fixed

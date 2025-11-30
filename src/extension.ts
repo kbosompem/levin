@@ -423,14 +423,8 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
                 // If it starts with { and contains :db/valueType, it's likely Datomic schema format
                 if (trimmed.startsWith('{') && trimmed.includes(':db/valueType')) {
-                    // Convert Datomic map schema to Datalevin vector schema
-                    const convertResult = await dtlvBridge.convertDatomicSchema(dbPath, trimmed);
-                    if (convertResult.success && convertResult.data) {
-                        result = await dtlvBridge.transact(dbPath, convertResult.data as string);
-                    } else {
-                        vscode.window.showErrorMessage(`Schema conversion failed: ${convertResult.error}`);
-                        return;
-                    }
+                    // Convert and transact Datomic schema in one step
+                    result = await dtlvBridge.transactDatomicSchema(dbPath, trimmed);
                 }
                 // If it's a vector with :db/id and negative numbers, it's data with temp IDs
                 else if (trimmed.startsWith('[') && trimmed.includes(':db/id') && /:db\/id\s+-\d/.test(trimmed)) {
