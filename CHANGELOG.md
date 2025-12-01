@@ -5,6 +5,28 @@ All notable changes to the Levin extension will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2024-11-30
+
+### Added
+
+- **Entity Browser** - Click "Entities" in tree to open paginated entity browser
+  - Filter by namespace
+  - Page sizes: 10, 25, 50, 100
+  - Click entity ID to inspect
+  - Shows preview of first attribute
+- **Relationships Panel** - Click "Relationships" in tree to see ref-type attributes
+  - Shows all attributes with `:db/valueType :db.type/ref`
+  - Click attribute to open query for that relationship
+  - Shows cardinality and component info
+
+### Changed
+
+- **Simplified tree view** - Schema, Entities, Relationships are now clickable items that open panels
+  - No more expansion issues - panels provide better UX
+  - Click instead of expand to view data
+
+---
+
 ## [0.2.13] - 2024-11-29
 
 ### Fixed

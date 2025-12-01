@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { DtlvBridge, SchemaAttribute } from '../dtlv-bridge';
 
-export type TreeItemType = 'database' | 'schema-folder' | 'schema-item' | 'entities-folder' | 'entity-namespace' | 'queries-folder' | 'open-database';
+export type TreeItemType = 'database' | 'schema-folder' | 'schema-item' | 'entities-folder' | 'entity-namespace' | 'relationships-folder' | 'queries-folder' | 'open-database';
 
 export class DatabaseTreeItem extends vscode.TreeItem {
     constructor(
@@ -37,6 +37,9 @@ export class DatabaseTreeItem extends vscode.TreeItem {
                 break;
             case 'entity-namespace':
                 this.iconPath = new vscode.ThemeIcon('symbol-namespace');
+                break;
+            case 'relationships-folder':
+                this.iconPath = new vscode.ThemeIcon('git-merge');
                 break;
             case 'queries-folder':
                 this.iconPath = new vscode.ThemeIcon('search');
@@ -188,37 +191,47 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     private async getDatabaseChildren(dbPath: string): Promise<DatabaseTreeItem[]> {
         const items: DatabaseTreeItem[] = [];
 
-        // Schema folder
+        // Schema folder - clicking opens Schema Editor panel
         const schemaFolder = new DatabaseTreeItem(
             'Schema',
-            vscode.TreeItemCollapsibleState.Collapsed,
+            vscode.TreeItemCollapsibleState.None,
             'schema-folder',
             dbPath
         );
+        schemaFolder.command = {
+            command: 'levin.editSchema',
+            title: 'View Schema',
+            arguments: [schemaFolder]
+        };
         items.push(this.registerItem(schemaFolder));
 
-        // Entities folder - try to get counts
-        try {
-            const entityCounts = await this.getEntityCountsCached(dbPath);
-            const totalEntities = entityCounts.reduce((sum, ec) => sum + ec.count, 0);
+        // Entities folder - clicking opens Entity Browser panel
+        const entitiesItem = new DatabaseTreeItem(
+            'Entities',
+            vscode.TreeItemCollapsibleState.None,
+            'entities-folder',
+            dbPath
+        );
+        entitiesItem.command = {
+            command: 'levin.browseEntities',
+            title: 'Browse Entities',
+            arguments: [entitiesItem]
+        };
+        items.push(this.registerItem(entitiesItem));
 
-            const entitiesItem = new DatabaseTreeItem(
-                `Entities (${totalEntities})`,
-                vscode.TreeItemCollapsibleState.Collapsed,
-                'entities-folder',
-                dbPath
-            );
-            items.push(this.registerItem(entitiesItem));
-        } catch {
-            // If we can't get counts, still show folder
-            const entitiesItem = new DatabaseTreeItem(
-                'Entities',
-                vscode.TreeItemCollapsibleState.Collapsed,
-                'entities-folder',
-                dbPath
-            );
-            items.push(this.registerItem(entitiesItem));
-        }
+        // Relationships folder - clicking opens Relationships panel
+        const relationshipsItem = new DatabaseTreeItem(
+            'Relationships',
+            vscode.TreeItemCollapsibleState.None,
+            'relationships-folder',
+            dbPath
+        );
+        relationshipsItem.command = {
+            command: 'levin.showRelationships',
+            title: 'View Relationships',
+            arguments: [relationshipsItem]
+        };
+        items.push(this.registerItem(relationshipsItem));
 
         return items;
     }

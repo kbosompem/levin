@@ -8,6 +8,8 @@ import { ResultsPanel } from './views/results-panel';
 import { EntityInspector } from './views/entity-inspector';
 import { SchemaEditor } from './views/schema-editor';
 import { TransactionPanel } from './views/transaction-panel';
+import { EntityBrowser } from './views/entity-browser';
+import { RelationshipsPanel } from './views/relationships-panel';
 import { QueryHistoryProvider } from './providers/query-history-provider';
 import { SavedQueriesProvider } from './providers/saved-queries-provider';
 
@@ -19,6 +21,8 @@ let resultsPanel: ResultsPanel | undefined;
 let entityInspector: EntityInspector | undefined;
 let schemaEditor: SchemaEditor | undefined;
 let transactionPanel: TransactionPanel | undefined;
+let entityBrowser: EntityBrowser | undefined;
+let relationshipsPanel: RelationshipsPanel | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     console.log('Levin extension is activating...');
@@ -253,6 +257,32 @@ function registerCommands(context: vscode.ExtensionContext): void {
             const finalDbPath = dbPath || await selectDatabase();
             if (finalDbPath) {
                 await showSchemaEditor(context, finalDbPath);
+            } else {
+                vscode.window.showErrorMessage('Could not determine database path');
+            }
+        })
+    );
+
+    // Browse Entities command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.browseEntities', async (item?: DatabaseTreeItem) => {
+            const dbPath = extractDbPath(item);
+            const finalDbPath = dbPath || await selectDatabase();
+            if (finalDbPath) {
+                await showEntityBrowser(context, finalDbPath);
+            } else {
+                vscode.window.showErrorMessage('Could not determine database path');
+            }
+        })
+    );
+
+    // Show Relationships command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.showRelationships', async (item?: DatabaseTreeItem) => {
+            const dbPath = extractDbPath(item);
+            const finalDbPath = dbPath || await selectDatabase();
+            if (finalDbPath) {
+                await showRelationshipsPanel(context, finalDbPath);
             } else {
                 vscode.window.showErrorMessage('Could not determine database path');
             }
@@ -694,6 +724,26 @@ async function showTransactionPanel(
         transactionPanel = new TransactionPanel(context, dtlvBridge);
     }
     await transactionPanel.show(dbPath);
+}
+
+async function showEntityBrowser(
+    context: vscode.ExtensionContext,
+    dbPath: string
+): Promise<void> {
+    if (!entityBrowser) {
+        entityBrowser = new EntityBrowser(context, dtlvBridge);
+    }
+    await entityBrowser.show(dbPath);
+}
+
+async function showRelationshipsPanel(
+    context: vscode.ExtensionContext,
+    dbPath: string
+): Promise<void> {
+    if (!relationshipsPanel) {
+        relationshipsPanel = new RelationshipsPanel(context, dtlvBridge);
+    }
+    await relationshipsPanel.show(dbPath);
 }
 
 export function deactivate(): void {

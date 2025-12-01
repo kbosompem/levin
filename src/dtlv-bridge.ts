@@ -401,6 +401,63 @@ export class DtlvBridge {
     }
 
     /**
+     * Query all entities with a preview (first non-db attribute value)
+     */
+    async queryEntitiesWithPreview(dbPath: string): Promise<QueryResult> {
+        const code = `
+            (let [db @conn
+                  ;; Get all unique entity IDs
+                  eids (datalevin.core/q '[:find ?e :where [?e _ _]] db)
+                  ;; For each entity, get first attribute and namespace
+                  entities (->> eids
+                                (map first)
+                                (map (fn [eid]
+                                       (let [entity (datalevin.core/pull db '[*] eid)
+                                             attrs (dissoc entity :db/id)
+                                             first-attr (first attrs)
+                                             ns (some->> (keys attrs)
+                                                         (map namespace)
+                                                         (remove nil?)
+                                                         first)]
+                                         {:id eid
+                                          :namespace ns
+                                          :preview (when first-attr
+                                                     (str (first first-attr) " " (second first-attr)))})))
+                                (sort-by :id)
+                                vec)]
+              entities)
+        `.trim();
+
+        return this.runCode(dbPath, code);
+    }
+
+    /**
+     * Get all ref-type attributes (for relationships panel)
+     */
+    async getRefAttributes(dbPath: string): Promise<QueryResult> {
+        const code = `
+            (let [db @conn
+                  ;; Query attributes with ref valueType
+                  ref-attrs (datalevin.core/q '[:find ?attr ?card ?comp
+                                                :where
+                                                [?e :db/ident ?attr]
+                                                [?e :db/valueType :db.type/ref]
+                                                [(get-else $ ?e :db/cardinality :db.cardinality/one) ?card]
+                                                [(get-else $ ?e :db/isComponent false) ?comp]]
+                                              db)]
+              (->> ref-attrs
+                   (map (fn [[attr card comp]]
+                          {:attribute (str attr)
+                           :cardinality (name card)
+                           :isComponent comp}))
+                   (sort-by :attribute)
+                   vec))
+        `.trim();
+
+        return this.runCode(dbPath, code);
+    }
+
+    /**
      * Run code with a database connection
      * This wraps the code with connection setup/teardown
      */
