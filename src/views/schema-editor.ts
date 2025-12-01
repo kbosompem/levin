@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { DtlvBridge, SchemaAttribute } from '../dtlv-bridge';
 
 export class SchemaEditor {
-    private panel: vscode.WebviewPanel | undefined;
+    private panels: Map<string, vscode.WebviewPanel> = new Map();
     private currentDbPath: string = '';
     private schema: SchemaAttribute[] = [];
 
@@ -24,8 +24,10 @@ export class SchemaEditor {
 
         const dbName = dbPath.split('/').pop() || 'Unknown';
 
-        if (!this.panel) {
-            this.panel = vscode.window.createWebviewPanel(
+        let panel = this.panels.get(dbPath);
+
+        if (!panel) {
+            panel = vscode.window.createWebviewPanel(
                 'levinSchema',
                 `Schema: ${dbName}`,
                 vscode.ViewColumn.Active,
@@ -35,36 +37,38 @@ export class SchemaEditor {
                 }
             );
 
-            this.panel.onDidDispose(() => {
-                this.panel = undefined;
+            panel.onDidDispose(() => {
+                this.panels.delete(dbPath);
             });
 
-            this.panel.webview.onDidReceiveMessage(
-                this.handleMessage.bind(this),
+            panel.webview.onDidReceiveMessage(
+                (msg) => this.handleMessage(msg, dbPath),
                 undefined
             );
+
+            this.panels.set(dbPath, panel);
         } else {
-            this.panel.title = `Schema: ${dbName}`;
+            panel.reveal(vscode.ViewColumn.Active);
         }
 
-        this.updateContent();
+        this.updateContent(panel);
     }
 
-    private async handleMessage(message: { command: string; [key: string]: unknown }): Promise<void> {
+    private async handleMessage(message: { command: string; [key: string]: unknown }, dbPath: string): Promise<void> {
         switch (message.command) {
             case 'addAttribute':
-                await this.addAttribute(message.attribute as NewAttribute);
+                await this.addAttribute(message.attribute as NewAttribute, dbPath);
                 break;
             case 'refresh':
-                await this.refresh();
+                await this.refresh(dbPath);
                 break;
         }
     }
 
-    private async addAttribute(attr: NewAttribute): Promise<void> {
+    private async addAttribute(attr: NewAttribute, dbPath: string): Promise<void> {
         const fullAttribute = `${attr.namespace}/${attr.name}`;
 
-        const result = await this.dtlvBridge.addSchema(this.currentDbPath, {
+        const result = await this.dtlvBridge.addSchema(dbPath, {
             attribute: fullAttribute,
             valueType: attr.valueType,
             cardinality: attr.cardinality,
@@ -76,20 +80,23 @@ export class SchemaEditor {
 
         if (result.success) {
             vscode.window.showInformationMessage(`Added attribute :${fullAttribute}`);
-            await this.refresh();
+            await this.refresh(dbPath);
         } else {
             vscode.window.showErrorMessage(`Failed to add attribute: ${result.error}`);
         }
     }
 
-    private async refresh(): Promise<void> {
-        this.schema = await this.dtlvBridge.getSchema(this.currentDbPath);
-        this.updateContent();
+    private async refresh(dbPath: string): Promise<void> {
+        this.currentDbPath = dbPath;
+        this.schema = await this.dtlvBridge.getSchema(dbPath);
+        const panel = this.panels.get(dbPath);
+        if (panel) {
+            this.updateContent(panel);
+        }
     }
 
-    private updateContent(): void {
-        if (!this.panel) { return; }
-        this.panel.webview.html = this.getHtml();
+    private updateContent(panel: vscode.WebviewPanel): void {
+        panel.webview.html = this.getHtml();
     }
 
     private getHtml(): string {
@@ -349,7 +356,10 @@ export class SchemaEditor {
     }
 
     dispose(): void {
-        this.panel?.dispose();
+        for (const panel of this.panels.values()) {
+            panel.dispose();
+        }
+        this.panels.clear();
     }
 }
 

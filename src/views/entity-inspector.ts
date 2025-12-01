@@ -2,9 +2,18 @@ import * as vscode from 'vscode';
 import { DtlvBridge } from '../dtlv-bridge';
 import { formatValue } from '../utils/formatters';
 
+interface EntityRef {
+    id: number;
+    attribute: string;
+    namespace?: string;
+    preview?: string;
+}
+
 interface EntityData {
     eid: number;
     attributes: Record<string, unknown>;
+    refAttributes: string[];
+    references: EntityRef[];
 }
 
 export class EntityInspector {
@@ -180,6 +189,51 @@ export class EntityInspector {
         .value-string { color: var(--vscode-symbolIcon-stringForeground); }
         .value-number { color: var(--vscode-symbolIcon-numberForeground); }
         .value-boolean { color: var(--vscode-symbolIcon-booleanForeground); }
+
+        .references-section {
+            margin-top: 24px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .references-section h3 {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+        }
+
+        .section-desc {
+            color: var(--vscode-descriptionForeground);
+            font-size: 12px;
+            margin: 0 0 12px 0;
+        }
+
+        .refs-table th {
+            background: var(--header-bg);
+            font-weight: 600;
+            width: auto;
+        }
+
+        .refs-table .attr-name {
+            font-family: monospace;
+            color: var(--vscode-symbolIcon-fieldForeground);
+        }
+
+        .ns-tag {
+            display: inline-block;
+            padding: 2px 6px;
+            background: var(--header-bg);
+            border-radius: 4px;
+            font-size: 11px;
+        }
+
+        .preview {
+            color: var(--vscode-descriptionForeground);
+            font-size: 12px;
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
     </style>
 </head>
 <body>
@@ -193,8 +247,35 @@ export class EntityInspector {
     </div>
 
     <table>
-        ${this.renderAttributes(entity.attributes)}
+        ${this.renderAttributes(entity.attributes, entity.refAttributes)}
     </table>
+
+    ${entity.references.length > 0 ? `
+    <div class="references-section">
+        <h3>References (${entity.references.length})</h3>
+        <p class="section-desc">Entities this entity depends on:</p>
+        <table class="refs-table">
+            <thead>
+                <tr>
+                    <th>Via</th>
+                    <th>Entity</th>
+                    <th>Type</th>
+                    <th>Preview</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${entity.references.map(ref => `
+                    <tr>
+                        <td class="attr-name">${this.escapeHtml(ref.attribute)}</td>
+                        <td><span class="entity-link" onclick="navigate(${ref.id})">${ref.id}</span></td>
+                        <td>${ref.namespace ? `<span class="ns-tag">${this.escapeHtml(ref.namespace)}</span>` : '-'}</td>
+                        <td class="preview">${ref.preview ? this.escapeHtml(ref.preview) : '-'}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    </div>
+    ` : ''}
 
     <script>
         const vscode = acquireVsCodeApi();
@@ -207,17 +288,20 @@ export class EntityInspector {
 </html>`;
     }
 
-    private renderAttributes(attrs: Record<string, unknown>): string {
+    private renderAttributes(attrs: Record<string, unknown>, refAttributes: string[]): string {
         const entries = Object.entries(attrs);
         entries.sort((a, b) => a[0].localeCompare(b[0]));
 
+        const refAttrSet = new Set(refAttributes);
+
         return entries.map(([key, value]) => {
-            const formattedValue = this.formatAttributeValue(value);
+            const isRef = refAttrSet.has(key) || refAttrSet.has(':' + key);
+            const formattedValue = this.formatAttributeValue(value, isRef);
             return `<tr><th>${this.escapeHtml(key)}</th><td>${formattedValue}</td></tr>`;
         }).join('');
     }
 
-    private formatAttributeValue(value: unknown): string {
+    private formatAttributeValue(value: unknown, isRef: boolean = false): string {
         if (value === null || value === undefined) {
             return '<span class="value-null">nil</span>';
         }
@@ -227,7 +311,8 @@ export class EntityInspector {
         }
 
         if (typeof value === 'number') {
-            if (Number.isInteger(value) && value > 0) {
+            // Only make clickable if this is a ref attribute
+            if (isRef && Number.isInteger(value) && value > 0) {
                 return `<span class="entity-link" onclick="navigate(${value})">${value}</span>`;
             }
             return `<span class="value-number">${value}</span>`;
@@ -239,7 +324,7 @@ export class EntityInspector {
 
         if (Array.isArray(value)) {
             if (value.length === 0) { return '[]'; }
-            const items = value.map(v => this.formatAttributeValue(v)).join(', ');
+            const items = value.map(v => this.formatAttributeValue(v, isRef)).join(', ');
             return `[${items}]`;
         }
 

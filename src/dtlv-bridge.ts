@@ -227,13 +227,58 @@ export class DtlvBridge {
     }
 
     /**
-     * Get entity by ID
+     * Get entity by ID, including ref attribute info and outgoing references
      */
     async getEntity(dbPath: string, entityId: number): Promise<QueryResult> {
-        // Use pull API instead of entity API to avoid sci environment issues
+        // Pull entity, identify refs, and find what this entity references
+        // Note: Datalevin returns refs as {:db/id N} maps, so we need to extract the ID
         const code = `
-            (let [result (datalevin.core/pull @conn '[*] ${entityId})]
-              {:eid ${entityId} :attributes (dissoc result :db/id)})
+            (let [db @conn
+                  result (datalevin.core/pull db '[*] ${entityId})
+                  attrs (dissoc result :db/id)
+                  ;; Find which attributes are ref type
+                  ref-attrs (datalevin.core/q '[:find ?attr
+                                                :where
+                                                [?e :db/ident ?attr]
+                                                [?e :db/valueType :db.type/ref]]
+                                              db)
+                  ref-attr-set (set (map first ref-attrs))
+                  ;; Helper to extract entity ID from ref (could be {:db/id N} or just N)
+                  extract-id (fn [v]
+                               (cond
+                                 (number? v) v
+                                 (and (map? v) (:db/id v)) (:db/id v)
+                                 :else nil))
+                  ;; Normalize attrs: replace {:db/id N} with just N for display (one level)
+                  normalize-one (fn [v]
+                                  (if (and (map? v) (:db/id v) (= (count v) 1))
+                                    (:db/id v)
+                                    v))
+                  normalize-val (fn [v]
+                                  (if (sequential? v)
+                                    (mapv normalize-one v)
+                                    (normalize-one v)))
+                  normalized-attrs (into {} (map (fn [[k v]] [k (normalize-val v)]) attrs))
+                  ;; For each ref attribute on this entity, get the referenced entity preview
+                  refs-out (for [[attr val] attrs
+                                 :when (contains? ref-attr-set attr)
+                                 :let [;; Handle single value or collection
+                                       vals (if (sequential? val) val [val])
+                                       ;; Extract IDs from {:db/id N} maps
+                                       ids (keep extract-id vals)]]
+                             (for [ref-id ids
+                                   :let [ref-entity (datalevin.core/pull db '[*] ref-id)
+                                         ref-attrs (dissoc ref-entity :db/id)
+                                         preview (some->> ref-attrs first ((fn [[k v]] (str k " " v))))
+                                         ns (some->> ref-attrs keys (map namespace) (remove nil?) first)]]
+                               {:id ref-id
+                                :attribute (str attr)
+                                :namespace ns
+                                :preview preview}))]
+              {:eid ${entityId}
+               :attributes normalized-attrs
+               :refAttributes (vec (map str ref-attr-set))
+               :references (vec (flatten refs-out))})
         `.trim();
 
         return this.runCode(dbPath, code);
@@ -452,6 +497,49 @@ export class DtlvBridge {
                            :isComponent comp}))
                    (sort-by :attribute)
                    vec))
+        `.trim();
+
+        return this.runCode(dbPath, code);
+    }
+
+    /**
+     * Discover actual ref targets by querying data.
+     * For each ref attribute, find what namespaces the referenced entities belong to.
+     * Returns: [{:attribute ":movie/cast" :source "movie" :targets ["person"]}]
+     */
+    async discoverRefTargets(dbPath: string): Promise<QueryResult> {
+        const code = `
+            (let [db @conn
+                  ;; Get all ref attributes
+                  ref-attrs (datalevin.core/q '[:find ?attr
+                                                :where
+                                                [?e :db/ident ?attr]
+                                                [?e :db/valueType :db.type/ref]]
+                                              db)
+                  ;; For each ref attr, find target entity namespaces from actual data
+                  results (for [[attr] ref-attrs
+                                :let [;; Query: find namespaces of attributes on referenced entities
+                                      targets (datalevin.core/q '[:find ?target-ns
+                                                                  :in $ ?ref-attr
+                                                                  :where
+                                                                  [?e ?ref-attr ?ref]
+                                                                  [?ref ?target-attr _]
+                                                                  [(namespace ?target-attr) ?target-ns]
+                                                                  [(some? ?target-ns)]]
+                                                                db attr)
+                                      target-nses (->> targets (map first) distinct sort vec)
+                                      source-ns (namespace attr)]]
+                            {:attribute (str attr)
+                             :source source-ns
+                             :targets target-nses
+                             :cardinality (let [card (datalevin.core/q '[:find ?card .
+                                                                         :in $ ?attr
+                                                                         :where
+                                                                         [?e :db/ident ?attr]
+                                                                         [?e :db/cardinality ?card]]
+                                                                       db attr)]
+                                            (if card (name card) "one"))})]
+              (vec results))
         `.trim();
 
         return this.runCode(dbPath, code);

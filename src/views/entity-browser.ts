@@ -7,15 +7,18 @@ interface EntityRow {
     namespace?: string;
 }
 
+interface PanelState {
+    panel: vscode.WebviewPanel;
+    entities: EntityRow[];
+    filteredEntities: EntityRow[];
+    namespaces: string[];
+    currentPage: number;
+    pageSize: number;
+    namespaceFilter: string;
+}
+
 export class EntityBrowser {
-    private panel: vscode.WebviewPanel | undefined;
-    private currentDbPath: string = '';
-    private entities: EntityRow[] = [];
-    private filteredEntities: EntityRow[] = [];
-    private namespaces: string[] = [];
-    private currentPage: number = 1;
-    private pageSize: number = 25;
-    private namespaceFilter: string = '';
+    private panels: Map<string, PanelState> = new Map();
 
     constructor(
         private _context: vscode.ExtensionContext,
@@ -28,14 +31,12 @@ export class EntityBrowser {
             return;
         }
 
-        this.currentDbPath = dbPath;
-        this.currentPage = 1;
-        this.namespaceFilter = '';
-
         const dbName = dbPath.split('/').pop() || 'Unknown';
 
-        if (!this.panel) {
-            this.panel = vscode.window.createWebviewPanel(
+        let state = this.panels.get(dbPath);
+
+        if (!state) {
+            const panel = vscode.window.createWebviewPanel(
                 'levinEntities',
                 `Entities: ${dbName}`,
                 vscode.ViewColumn.Active,
@@ -45,83 +46,105 @@ export class EntityBrowser {
                 }
             );
 
-            this.panel.onDidDispose(() => {
-                this.panel = undefined;
+            state = {
+                panel,
+                entities: [],
+                filteredEntities: [],
+                namespaces: [],
+                currentPage: 1,
+                pageSize: 25,
+                namespaceFilter: ''
+            };
+
+            panel.onDidDispose(() => {
+                this.panels.delete(dbPath);
             });
 
-            this.panel.webview.onDidReceiveMessage(
-                this.handleMessage.bind(this),
+            panel.webview.onDidReceiveMessage(
+                (msg) => this.handleMessage(msg, dbPath),
                 undefined
             );
+
+            this.panels.set(dbPath, state);
         } else {
-            this.panel.title = `Entities: ${dbName}`;
+            state.panel.reveal(vscode.ViewColumn.Active);
         }
 
-        await this.loadEntities();
-        this.updateContent();
+        await this.loadEntities(dbPath);
+        this.updateContent(dbPath);
     }
 
-    private async handleMessage(message: { command: string; [key: string]: unknown }): Promise<void> {
+    private async handleMessage(message: { command: string; [key: string]: unknown }, dbPath: string): Promise<void> {
+        const state = this.panels.get(dbPath);
+        if (!state) return;
+
         switch (message.command) {
             case 'changePage':
-                this.currentPage = message.page as number;
-                this.updateContent();
+                state.currentPage = message.page as number;
+                this.updateContent(dbPath);
                 break;
             case 'changePageSize':
-                this.pageSize = message.pageSize as number;
-                this.currentPage = 1;
-                this.updateContent();
+                state.pageSize = message.pageSize as number;
+                state.currentPage = 1;
+                this.updateContent(dbPath);
                 break;
             case 'filterNamespace':
-                this.namespaceFilter = message.namespace as string;
-                this.currentPage = 1;
-                this.applyFilter();
-                this.updateContent();
+                state.namespaceFilter = message.namespace as string;
+                state.currentPage = 1;
+                this.applyFilter(dbPath);
+                this.updateContent(dbPath);
                 break;
             case 'inspectEntity':
-                vscode.commands.executeCommand('levin.showEntity', this.currentDbPath, message.entityId as number);
+                vscode.commands.executeCommand('levin.showEntity', dbPath, message.entityId as number);
                 break;
             case 'refresh':
-                await this.loadEntities();
-                this.updateContent();
+                await this.loadEntities(dbPath);
+                this.updateContent(dbPath);
                 break;
         }
     }
 
-    private async loadEntities(): Promise<void> {
+    private async loadEntities(dbPath: string): Promise<void> {
+        const state = this.panels.get(dbPath);
+        if (!state) return;
+
         // Query all entities with their first non-db attribute for preview
-        const result = await this.dtlvBridge.queryEntitiesWithPreview(this.currentDbPath);
+        const result = await this.dtlvBridge.queryEntitiesWithPreview(dbPath);
 
         if (result.success && result.data) {
-            this.entities = result.data as EntityRow[];
-            this.namespaces = [...new Set(this.entities.map(e => e.namespace).filter(Boolean))] as string[];
-            this.namespaces.sort();
-            this.applyFilter();
+            state.entities = result.data as EntityRow[];
+            state.namespaces = [...new Set(state.entities.map(e => e.namespace).filter(Boolean))] as string[];
+            state.namespaces.sort();
+            this.applyFilter(dbPath);
         } else {
-            this.entities = [];
-            this.filteredEntities = [];
-            this.namespaces = [];
+            state.entities = [];
+            state.filteredEntities = [];
+            state.namespaces = [];
         }
     }
 
-    private applyFilter(): void {
-        if (this.namespaceFilter) {
-            this.filteredEntities = this.entities.filter(e => e.namespace === this.namespaceFilter);
+    private applyFilter(dbPath: string): void {
+        const state = this.panels.get(dbPath);
+        if (!state) return;
+
+        if (state.namespaceFilter) {
+            state.filteredEntities = state.entities.filter(e => e.namespace === state.namespaceFilter);
         } else {
-            this.filteredEntities = [...this.entities];
+            state.filteredEntities = [...state.entities];
         }
     }
 
-    private updateContent(): void {
-        if (!this.panel) { return; }
-        this.panel.webview.html = this.getHtml();
+    private updateContent(dbPath: string): void {
+        const state = this.panels.get(dbPath);
+        if (!state) return;
+        state.panel.webview.html = this.getHtml(state);
     }
 
-    private getHtml(): string {
-        const totalPages = Math.ceil(this.filteredEntities.length / this.pageSize);
-        const startIdx = (this.currentPage - 1) * this.pageSize;
-        const endIdx = Math.min(startIdx + this.pageSize, this.filteredEntities.length);
-        const pageEntities = this.filteredEntities.slice(startIdx, endIdx);
+    private getHtml(state: PanelState): string {
+        const totalPages = Math.ceil(state.filteredEntities.length / state.pageSize);
+        const startIdx = (state.currentPage - 1) * state.pageSize;
+        const endIdx = Math.min(startIdx + state.pageSize, state.filteredEntities.length);
+        const pageEntities = state.filteredEntities.slice(startIdx, endIdx);
 
         return `<!DOCTYPE html>
 <html lang="en">
@@ -251,20 +274,20 @@ export class EntityBrowser {
             <label>Namespace:</label>
             <select id="namespaceFilter" onchange="filterNamespace()">
                 <option value="">All</option>
-                ${this.namespaces.map(ns => `<option value="${ns}" ${ns === this.namespaceFilter ? 'selected' : ''}>${ns}</option>`).join('')}
+                ${state.namespaces.map(ns => `<option value="${ns}" ${ns === state.namespaceFilter ? 'selected' : ''}>${ns}</option>`).join('')}
             </select>
         </div>
         <div class="toolbar-group">
             <label>Show:</label>
             <select id="pageSize" onchange="changePageSize()">
-                ${[10, 25, 50, 100].map(size => `<option value="${size}" ${size === this.pageSize ? 'selected' : ''}>${size}</option>`).join('')}
+                ${[10, 25, 50, 100].map(size => `<option value="${size}" ${size === state.pageSize ? 'selected' : ''}>${size}</option>`).join('')}
             </select>
         </div>
         <div class="toolbar-group">
             <button onclick="refresh()">Refresh</button>
         </div>
         <div class="stats">
-            Showing ${startIdx + 1}-${endIdx} of ${this.filteredEntities.length} entities
+            Showing ${startIdx + 1}-${endIdx} of ${state.filteredEntities.length} entities
         </div>
     </div>
 
@@ -289,17 +312,17 @@ export class EntityBrowser {
     </table>
 
     <div class="pagination">
-        <button onclick="changePage(1)" ${this.currentPage === 1 ? 'disabled' : ''}>First</button>
-        <button onclick="changePage(${this.currentPage - 1})" ${this.currentPage === 1 ? 'disabled' : ''}>Prev</button>
+        <button onclick="changePage(1)" ${state.currentPage === 1 ? 'disabled' : ''}>First</button>
+        <button onclick="changePage(${state.currentPage - 1})" ${state.currentPage === 1 ? 'disabled' : ''}>Prev</button>
         <span>Page</span>
-        <input type="number" id="pageInput" value="${this.currentPage}" min="1" max="${totalPages}" onchange="jumpToPage()" />
+        <input type="number" id="pageInput" value="${state.currentPage}" min="1" max="${totalPages}" onchange="jumpToPage()" />
         <span>of ${totalPages}</span>
-        <button onclick="changePage(${this.currentPage + 1})" ${this.currentPage >= totalPages ? 'disabled' : ''}>Next</button>
-        <button onclick="changePage(${totalPages})" ${this.currentPage >= totalPages ? 'disabled' : ''}>Last</button>
+        <button onclick="changePage(${state.currentPage + 1})" ${state.currentPage >= totalPages ? 'disabled' : ''}>Next</button>
+        <button onclick="changePage(${totalPages})" ${state.currentPage >= totalPages ? 'disabled' : ''}>Last</button>
     </div>
     ` : `
     <div class="empty-state">
-        <p>No entities found${this.namespaceFilter ? ` in namespace "${this.namespaceFilter}"` : ''}.</p>
+        <p>No entities found${state.namespaceFilter ? ` in namespace "${state.namespaceFilter}"` : ''}.</p>
     </div>
     `}
 
@@ -345,6 +368,9 @@ export class EntityBrowser {
     }
 
     dispose(): void {
-        this.panel?.dispose();
+        for (const state of this.panels.values()) {
+            state.panel.dispose();
+        }
+        this.panels.clear();
     }
 }

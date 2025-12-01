@@ -5,6 +5,47 @@ All notable changes to the Levin extension will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2024-11-30
+
+### Fixed
+
+- **Entity Inspector ref handling** - Fixed display of entity references
+  - Ref values now show as clickable IDs instead of `{:db/id N}` maps
+  - Only ref-type attributes are hyperlinked (not all numbers)
+  - Properly extracts IDs from Datalevin's `{:db/id N}` format
+
+---
+
+## [0.3.2] - 2024-11-30
+
+### Changed
+
+- **Data-driven relationship discovery** - Relationships diagram now queries actual data
+  - Instead of guessing from attribute names (`:movie/cast` → `cast`)
+  - Now discovers actual targets (`:movie/cast` → `person`)
+  - Shows `? (no data)` for refs with no data yet
+  - More accurate representation of real entity connections
+
+---
+
+## [0.3.1] - 2024-11-30
+
+### Fixed
+
+- **Separate panels per database** - Each database now gets its own Schema/Entities/Relationships tab
+  - Previously clicking on a different database would silently update the existing panel
+  - Now each database opens in a new tab, or brings existing tab to front
+
+### Changed
+
+- **Relationships diagram** - Added visual network diagram showing entity connections
+  - Nodes represent entity namespaces (order, customer, product, etc.)
+  - Arrows show ref-type attributes connecting them
+  - Dashed lines indicate one-to-many relationships
+  - Tabs to switch between Diagram and List view
+
+---
+
 ## [0.3.0] - 2024-11-30
 
 ### Added
