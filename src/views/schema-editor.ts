@@ -5,6 +5,7 @@ export class SchemaEditor {
     private panels: Map<string, vscode.WebviewPanel> = new Map();
     private currentDbPath: string = '';
     private schema: SchemaAttribute[] = [];
+    private displayTypes: Record<string, string> = {};
 
     constructor(
         private _context: vscode.ExtensionContext,
@@ -19,8 +20,13 @@ export class SchemaEditor {
 
         this.currentDbPath = dbPath;
 
-        // Fetch current schema
-        this.schema = await this.dtlvBridge.getSchema(dbPath);
+        // Fetch current schema and display types
+        const [schema, displayTypes] = await Promise.all([
+            this.dtlvBridge.getSchema(dbPath),
+            this.dtlvBridge.getDisplayTypes(dbPath)
+        ]);
+        this.schema = schema;
+        this.displayTypes = displayTypes;
 
         const dbName = dbPath.split('/').pop() || 'Unknown';
 
@@ -62,7 +68,19 @@ export class SchemaEditor {
             case 'refresh':
                 await this.refresh(dbPath);
                 break;
+            case 'setDisplayType':
+                await this.setDisplayType(message.attribute as string, message.displayType as string, dbPath);
+                break;
         }
+    }
+
+    private async setDisplayType(attribute: string, displayType: string, dbPath: string): Promise<void> {
+        if (displayType === 'none' || displayType === '') {
+            await this.dtlvBridge.removeDisplayType(dbPath, attribute);
+        } else {
+            await this.dtlvBridge.setDisplayType(dbPath, attribute, displayType);
+        }
+        await this.refresh(dbPath);
     }
 
     private async addAttribute(attr: NewAttribute, dbPath: string): Promise<void> {
@@ -88,7 +106,12 @@ export class SchemaEditor {
 
     private async refresh(dbPath: string): Promise<void> {
         this.currentDbPath = dbPath;
-        this.schema = await this.dtlvBridge.getSchema(dbPath);
+        const [schema, displayTypes] = await Promise.all([
+            this.dtlvBridge.getSchema(dbPath),
+            this.dtlvBridge.getDisplayTypes(dbPath)
+        ]);
+        this.schema = schema;
+        this.displayTypes = displayTypes;
         const panel = this.panels.get(dbPath);
         if (panel) {
             this.updateContent(panel);
@@ -210,6 +233,15 @@ export class SchemaEditor {
             font-size: 11px;
             margin-right: 4px;
         }
+
+        .display-select {
+            padding: 4px 8px;
+            background: var(--input-bg);
+            color: var(--text-color);
+            border: 1px solid var(--input-border);
+            border-radius: 4px;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -279,23 +311,36 @@ export class SchemaEditor {
                     <th>Type</th>
                     <th>Cardinality</th>
                     <th>Unique</th>
+                    <th>Display</th>
                     <th>Other</th>
                 </tr>
             </thead>
             <tbody>
-                ${this.schema.map(attr => `
+                ${this.schema.map(attr => {
+                    const displayType = this.displayTypes[attr.attribute] || this.displayTypes[':' + attr.attribute] || '';
+                    return `
                     <tr data-attribute="${this.escapeHtml(attr.attribute)}">
                         <td><code>${this.escapeHtml(attr.attribute)}</code></td>
                         <td>${attr.valueType || '-'}</td>
                         <td>${attr.cardinality || '-'}</td>
                         <td>${attr.unique || '-'}</td>
                         <td>
+                            <select class="display-select" onchange="setDisplayType('${this.escapeHtml(attr.attribute)}', this.value)">
+                                <option value="">-</option>
+                                <option value="image" ${displayType === 'image' ? 'selected' : ''}>image</option>
+                                <option value="hyperlink" ${displayType === 'hyperlink' ? 'selected' : ''}>hyperlink</option>
+                                <option value="email" ${displayType === 'email' ? 'selected' : ''}>email</option>
+                                <option value="json" ${displayType === 'json' ? 'selected' : ''}>json</option>
+                                <option value="code" ${displayType === 'code' ? 'selected' : ''}>code</option>
+                            </select>
+                        </td>
+                        <td>
                             ${attr.index ? '<span class="tag">indexed</span>' : ''}
                             ${attr.fulltext ? '<span class="tag">fulltext</span>' : ''}
                             ${attr.isComponent ? '<span class="tag">component</span>' : ''}
                         </td>
                     </tr>
-                `).join('')}
+                `}).join('')}
             </tbody>
         </table>
     </div>
@@ -344,6 +389,10 @@ export class SchemaEditor {
                 const attr = row.getAttribute('data-attribute').toLowerCase();
                 row.style.display = attr.includes(filter) ? '' : 'none';
             });
+        }
+
+        function setDisplayType(attribute, displayType) {
+            vscode.postMessage({ command: 'setDisplayType', attribute, displayType });
         }
     </script>
 </body>

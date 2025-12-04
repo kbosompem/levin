@@ -2,7 +2,7 @@
   "name": "levin",
   "displayName": "Levin",
   "description": "Browse, query, and manage Datalevin databases in VS Code",
-  "version": "0.3.3",
+  "version": "0.5.0",
   "publisher": "KayBosompem",
   "author": {
     "name": "Kay Bosompem"
@@ -114,6 +114,10 @@
       {
         "command": "levin.showRelationships",
         "title": "Levin: View Relationships"
+      },
+      {
+        "command": "levin.showRules",
+        "title": "Levin: Manage Rules"
       }
     ],
     "viewsContainers": {

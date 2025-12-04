@@ -21,6 +21,7 @@ export class EntityInspector {
     private currentEntity: EntityData | undefined;
     private currentDbPath: string = '';
     private history: Array<{ dbPath: string; eid: number }> = [];
+    private displayTypes: Record<string, string> = {};
 
     constructor(
         private _context: vscode.ExtensionContext,
@@ -30,15 +31,19 @@ export class EntityInspector {
     async show(dbPath: string, entityId: number): Promise<void> {
         this.currentDbPath = dbPath;
 
-        // Fetch entity data
-        const result = await this.dtlvBridge.getEntity(dbPath, entityId);
+        // Fetch entity data and display types in parallel
+        const [entityResult, displayTypes] = await Promise.all([
+            this.dtlvBridge.getEntity(dbPath, entityId),
+            this.dtlvBridge.getDisplayTypes(dbPath)
+        ]);
 
-        if (!result.success) {
-            vscode.window.showErrorMessage(`Failed to load entity: ${result.error}`);
+        if (!entityResult.success) {
+            vscode.window.showErrorMessage(`Failed to load entity: ${entityResult.error}`);
             return;
         }
 
-        this.currentEntity = result.data as EntityData;
+        this.currentEntity = entityResult.data as EntityData;
+        this.displayTypes = displayTypes;
 
         // Add to history
         this.history.push({ dbPath, eid: entityId });
@@ -112,6 +117,7 @@ export class EntityInspector {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Entity ${entity.eid}</title>
     <style>
@@ -176,6 +182,14 @@ export class EntityInspector {
             color: var(--link-color);
             cursor: pointer;
             text-decoration: underline;
+        }
+
+        .code-block {
+            background: var(--header-bg);
+            padding: 8px;
+            border-radius: 4px;
+            font-family: var(--vscode-editor-font-family);
+            white-space: pre-wrap;
         }
 
         pre {
@@ -296,17 +310,120 @@ export class EntityInspector {
 
         return entries.map(([key, value]) => {
             const isRef = refAttrSet.has(key) || refAttrSet.has(':' + key);
-            const formattedValue = this.formatAttributeValue(value, isRef);
+            const displayType = this.displayTypes[key] || this.displayTypes[':' + key] || '';
+            const formattedValue = this.formatAttributeValue(value, isRef, key, displayType);
             return `<tr><th>${this.escapeHtml(key)}</th><td>${formattedValue}</td></tr>`;
         }).join('');
     }
 
-    private formatAttributeValue(value: unknown, isRef: boolean = false): string {
+    private isImageAttribute(key: string, displayType: string): boolean {
+        if (displayType === 'image') return true;
+        if (displayType && displayType !== 'image') return false;
+        // Fallback to name-based detection
+        const lowerKey = key.toLowerCase();
+        return lowerKey.includes('photo') || lowerKey.includes('image') || lowerKey.includes('picture') || lowerKey.includes('avatar');
+    }
+
+    private isHyperlinkValue(value: string, displayType: string): boolean {
+        if (displayType === 'hyperlink') return true;
+        if (displayType && displayType !== 'hyperlink') return false;
+        // Auto-detect URLs
+        return value.startsWith('http://') || value.startsWith('https://');
+    }
+
+    private hexToBase64(hex: string): string {
+        // Remove 0x prefix if present
+        let cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
+
+        // Check for OLE wrapper and extract actual image data
+        cleanHex = this.stripOleWrapper(cleanHex);
+
+        // Convert hex to bytes then to base64
+        const bytes = new Uint8Array(cleanHex.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []);
+        let binary = '';
+        bytes.forEach(b => binary += String.fromCharCode(b));
+        return btoa(binary);
+    }
+
+    private stripOleWrapper(hex: string): string {
+        const lowerHex = hex.toLowerCase();
+
+        // Look for BMP signature (42 4D = "BM")
+        const bmpIndex = lowerHex.indexOf('424d');
+        if (bmpIndex > 0) {
+            return hex.slice(bmpIndex);
+        }
+
+        // Look for JPEG signature (FF D8 FF)
+        const jpegIndex = lowerHex.indexOf('ffd8ff');
+        if (jpegIndex > 0) {
+            return hex.slice(jpegIndex);
+        }
+
+        // Look for PNG signature (89 50 4E 47)
+        const pngIndex = lowerHex.indexOf('89504e47');
+        if (pngIndex > 0) {
+            return hex.slice(pngIndex);
+        }
+
+        // Look for GIF signature (47 49 46 38)
+        const gifIndex = lowerHex.indexOf('47494638');
+        if (gifIndex > 0) {
+            return hex.slice(gifIndex);
+        }
+
+        return hex;
+    }
+
+    private detectImageType(hex: string): string {
+        let cleanHex = hex.startsWith('0x') ? hex.slice(2).toLowerCase() : hex.toLowerCase();
+        cleanHex = this.stripOleWrapper(cleanHex).toLowerCase();
+
+        // Check magic bytes after stripping OLE
+        if (cleanHex.startsWith('ffd8ff')) return 'jpeg';
+        if (cleanHex.startsWith('89504e47')) return 'png';
+        if (cleanHex.startsWith('47494638')) return 'gif';
+        if (cleanHex.startsWith('424d')) return 'bmp';
+        return 'bmp'; // default for OLE-wrapped data
+    }
+
+    private formatAttributeValue(value: unknown, isRef: boolean = false, key: string = '', displayType: string = ''): string {
         if (value === null || value === undefined) {
             return '<span class="value-null">nil</span>';
         }
 
         if (typeof value === 'string') {
+            // Check if this is an image
+            if (this.isImageAttribute(key, displayType) && value.startsWith('0x') && value.length > 100) {
+                try {
+                    const base64 = this.hexToBase64(value);
+                    const imageType = this.detectImageType(value);
+                    return `<img src="data:image/${imageType};base64,${base64}" style="max-width: 200px; max-height: 200px; border-radius: 4px;" />`;
+                } catch {
+                    // Fall through to normal string display
+                }
+            }
+            // Check if this is a hyperlink
+            if (this.isHyperlinkValue(value, displayType)) {
+                return `<a href="${this.escapeHtml(value)}" class="entity-link" target="_blank">${this.escapeHtml(value)}</a>`;
+            }
+            // Check if this is an email
+            if (displayType === 'email' || (!displayType && value.includes('@') && value.includes('.'))) {
+                return `<a href="mailto:${this.escapeHtml(value)}" class="entity-link">${this.escapeHtml(value)}</a>`;
+            }
+            // Check if this is JSON
+            if (displayType === 'json') {
+                try {
+                    const parsed = JSON.parse(value);
+                    return `<pre>${this.escapeHtml(JSON.stringify(parsed, null, 2))}</pre>`;
+                } catch {
+                    // Not valid JSON
+                }
+            }
+            // Check if this is code
+            if (displayType === 'code') {
+                return `<pre class="code-block">${this.escapeHtml(value)}</pre>`;
+            }
             return `<span class="value-string">"${this.escapeHtml(value)}"</span>`;
         }
 

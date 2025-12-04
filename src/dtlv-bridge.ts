@@ -25,6 +25,7 @@ export interface DatabaseInfo {
     path: string;
     name: string;
     exists: boolean;
+    isRemote?: boolean;
 }
 
 export class DtlvBridge {
@@ -77,16 +78,37 @@ export class DtlvBridge {
     }
 
     /**
+     * Check if a path is a remote server URI
+     */
+    private isRemoteUri(dbPath: string): boolean {
+        return dbPath.startsWith('dtlv://');
+    }
+
+    /**
+     * Extract database name from remote URI or local path
+     */
+    private extractDatabaseName(dbPath: string): string {
+        if (this.isRemoteUri(dbPath)) {
+            // Extract database name from dtlv://[user:pass@]host:port/dbname
+            const match = dbPath.match(/\/([^/?#]+)(?:[?#]|$)/);
+            return match ? match[1] : 'remote-db';
+        }
+        return path.basename(dbPath);
+    }
+
+    /**
      * Open/register a database
      */
     openDatabase(dbPath: string): DatabaseInfo {
-        const resolvedPath = this.resolvePath(dbPath);
-        const name = path.basename(resolvedPath);
+        const isRemote = this.isRemoteUri(dbPath);
+        const resolvedPath = isRemote ? dbPath : this.resolvePath(dbPath);
+        const name = this.extractDatabaseName(resolvedPath);
 
         const info: DatabaseInfo = {
             path: resolvedPath,
             name: name,
-            exists: true // We'll assume it exists when opened
+            exists: true, // We'll assume it exists when opened
+            isRemote: isRemote
         };
 
         this.openDatabases.set(resolvedPath, info);
@@ -97,7 +119,7 @@ export class DtlvBridge {
      * Close/unregister a database
      */
     closeDatabase(dbPath: string): void {
-        const resolvedPath = this.resolvePath(dbPath);
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
         this.openDatabases.delete(resolvedPath);
     }
 
@@ -112,7 +134,7 @@ export class DtlvBridge {
      * Check if a database exists by trying to get its stats
      */
     async databaseExists(dbPath: string): Promise<boolean> {
-        const resolvedPath = this.resolvePath(dbPath);
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
         const result = await this.runCode(resolvedPath, '(datalevin.core/schema conn)');
         return result.success;
     }
@@ -121,7 +143,7 @@ export class DtlvBridge {
      * Create a new database
      */
     async createDatabase(dbPath: string): Promise<QueryResult> {
-        const resolvedPath = this.resolvePath(dbPath);
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
 
         // Create by opening connection and closing it
         const code = `
@@ -330,11 +352,11 @@ export class DtlvBridge {
      * Converts and transacts as: [{:db/ident :movie/title :db/valueType :db.type/string ...}]
      */
     async transactDatomicSchema(dbPath: string, schemaEdn: string): Promise<QueryResult> {
-        const resolvedPath = this.resolvePath(dbPath);
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
 
         // Convert and transact in one step to avoid string escaping issues
         const code = `
-            (let [conn (datalevin.core/get-conn "${this.escapeString(resolvedPath)}")
+            (let [conn (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" {} {:mapsize 1000})
                   datomic-schema ${schemaEdn}
                   datalevin-schema (->> datomic-schema
                                         (map (fn [[attr props]]
@@ -358,12 +380,12 @@ export class DtlvBridge {
      * This method queries schema, rebuilds it in the format get-conn expects, then transacts data.
      */
     async importWithTempIds(dbPath: string, dataEdn: string): Promise<QueryResult> {
-        const resolvedPath = this.resolvePath(dbPath);
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
 
         // Query schema from database, rebuild in get-conn format, then transact data
         const code = `
             (let [;; Get schema info via query (more reliable than schema fn)
-                  conn1 (datalevin.core/get-conn "${this.escapeString(resolvedPath)}")
+                  conn1 (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" {} {:mapsize 1000})
                   db @conn1
                   ;; Query all schema attributes with their properties
                   schema-data (datalevin.core/q '[:find ?attr ?prop ?val
@@ -381,7 +403,7 @@ export class DtlvBridge {
                                      schema-data)
                   _ (datalevin.core/close conn1)
                   ;; Reopen with schema for proper temp ID resolution
-                  conn2 (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" schema-map)
+                  conn2 (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" schema-map {:mapsize 1000})
                   result (datalevin.core/transact! conn2 ${dataEdn})]
               (datalevin.core/close conn2)
               {:tx-id (:max-tx result)
@@ -550,11 +572,11 @@ export class DtlvBridge {
      * This wraps the code with connection setup/teardown
      */
     private async runCode(dbPath: string, code: string): Promise<QueryResult> {
-        const resolvedPath = this.resolvePath(dbPath);
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
 
         // Use fully qualified names to avoid shadowing issues in dtlv's sci environment
         const wrappedCode = `
-            (let [conn (datalevin.core/get-conn "${this.escapeString(resolvedPath)}")]
+            (let [conn (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" {} {:mapsize 1000})]
               (try
                 ${code}
                 (finally (datalevin.core/close conn))))
@@ -640,5 +662,207 @@ export class DtlvBridge {
             return path.join(homedir, dbPath.slice(1));
         }
         return path.resolve(dbPath);
+    }
+
+    // ==================== RULES MANAGEMENT ====================
+
+    /**
+     * Ensure the rules schema exists in the database
+     */
+    async ensureRulesSchema(dbPath: string): Promise<QueryResult> {
+        const code = `
+            (let [schema (datalevin.core/schema conn)
+                  has-rules? (contains? schema :levin.rule/name)]
+              (when-not has-rules?
+                (datalevin.core/transact! conn
+                  [{:db/ident :levin.rule/name
+                    :db/valueType :db.type/string
+                    :db/cardinality :db.cardinality/one
+                    :db/unique :db.unique/identity}
+                   {:db/ident :levin.rule/body
+                    :db/valueType :db.type/string
+                    :db/cardinality :db.cardinality/one}
+                   {:db/ident :levin.rule/description
+                    :db/valueType :db.type/string
+                    :db/cardinality :db.cardinality/one}]))
+              {:success true :had-schema has-rules?})
+        `.trim();
+
+        return this.runCode(dbPath, code);
+    }
+
+    /**
+     * Get all stored rules
+     */
+    async getRules(dbPath: string): Promise<QueryResult> {
+        const code = `
+            (let [db @conn
+                  rules (datalevin.core/q '[:find ?e ?name ?body ?desc
+                                            :where
+                                            [?e :levin.rule/name ?name]
+                                            [?e :levin.rule/body ?body]
+                                            [(get-else $ ?e :levin.rule/description "") ?desc]]
+                                          db)]
+              (->> rules
+                   (map (fn [[eid name body desc]]
+                          {:eid eid
+                           :name name
+                           :body body
+                           :description desc}))
+                   (sort-by :name)
+                   vec))
+        `.trim();
+
+        return this.runCode(dbPath, code);
+    }
+
+    /**
+     * Save a rule (create or update)
+     */
+    async saveRule(dbPath: string, name: string, body: string, description?: string): Promise<QueryResult> {
+        // First ensure schema exists
+        await this.ensureRulesSchema(dbPath);
+
+        const descPart = description ? `:levin.rule/description "${this.escapeString(description)}"` : '';
+        const code = `
+            (datalevin.core/transact! conn
+              [{:levin.rule/name "${this.escapeString(name)}"
+                :levin.rule/body "${this.escapeString(body)}"
+                ${descPart}}])
+        `.trim();
+
+        return this.runCode(dbPath, code);
+    }
+
+    /**
+     * Delete a rule by name
+     */
+    async deleteRule(dbPath: string, name: string): Promise<QueryResult> {
+        const code = `
+            (let [eid (datalevin.core/q '[:find ?e .
+                                          :in $ ?name
+                                          :where [?e :levin.rule/name ?name]]
+                                        @conn "${this.escapeString(name)}")]
+              (when eid
+                (datalevin.core/transact! conn [[:db/retractEntity eid]]))
+              {:deleted (some? eid)})
+        `.trim();
+
+        return this.runCode(dbPath, code);
+    }
+
+    /**
+     * Run a query with rules from the database
+     * ruleNames: array of rule names to include
+     */
+    async queryWithRules(dbPath: string, query: string, ruleNames: string[]): Promise<QueryResult> {
+        if (ruleNames.length === 0) {
+            // No rules, just run regular query
+            return this.query(dbPath, query);
+        }
+
+        const ruleNamesEdn = '[' + ruleNames.map(n => `"${this.escapeString(n)}"`).join(' ') + ']';
+        const code = `
+            (let [db @conn
+                  ;; Fetch rule bodies for requested names
+                  rule-bodies (datalevin.core/q '[:find ?body
+                                                  :in $ [?name ...]
+                                                  :where
+                                                  [?e :levin.rule/name ?name]
+                                                  [?e :levin.rule/body ?body]]
+                                                db ${ruleNamesEdn})
+                  ;; Parse and combine rules
+                  rules (->> rule-bodies
+                             (map first)
+                             (map read-string)
+                             (apply concat)
+                             vec)
+                  ;; Run query with rules
+                  query-form (read-string "${this.escapeString(query)}")]
+              (if (seq rules)
+                (datalevin.core/q query-form db rules)
+                (datalevin.core/q query-form db)))
+        `.trim();
+
+        return this.runCode(dbPath, code);
+    }
+
+    // ==================== DISPLAY TYPE MANAGEMENT ====================
+
+    /**
+     * Ensure the display type schema exists in the database
+     */
+    async ensureDisplaySchema(dbPath: string): Promise<QueryResult> {
+        const code = `
+            (let [schema (datalevin.core/schema conn)
+                  has-display? (contains? schema :levin.display/attribute)]
+              (when-not has-display?
+                (datalevin.core/transact! conn
+                  [{:db/ident :levin.display/attribute
+                    :db/valueType :db.type/string
+                    :db/cardinality :db.cardinality/one
+                    :db/unique :db.unique/identity}
+                   {:db/ident :levin.display/type
+                    :db/valueType :db.type/string
+                    :db/cardinality :db.cardinality/one}]))
+              {:success true :had-schema has-display?})
+        `.trim();
+
+        return this.runCode(dbPath, code);
+    }
+
+    /**
+     * Get all display type settings
+     * Returns map of attribute -> display type
+     */
+    async getDisplayTypes(dbPath: string): Promise<Record<string, string>> {
+        const code = `
+            (let [db @conn
+                  displays (datalevin.core/q '[:find ?attr ?type
+                                               :where
+                                               [?e :levin.display/attribute ?attr]
+                                               [?e :levin.display/type ?type]]
+                                             db)]
+              (into {} displays))
+        `.trim();
+
+        const result = await this.runCode(dbPath, code);
+        if (result.success && result.data) {
+            return result.data as Record<string, string>;
+        }
+        return {};
+    }
+
+    /**
+     * Set display type for an attribute
+     * Types: "image", "hyperlink", "email", "json", "code", "html"
+     */
+    async setDisplayType(dbPath: string, attribute: string, displayType: string): Promise<QueryResult> {
+        await this.ensureDisplaySchema(dbPath);
+
+        const code = `
+            (datalevin.core/transact! conn
+              [{:levin.display/attribute "${this.escapeString(attribute)}"
+                :levin.display/type "${this.escapeString(displayType)}"}])
+        `.trim();
+
+        return this.runCode(dbPath, code);
+    }
+
+    /**
+     * Remove display type for an attribute
+     */
+    async removeDisplayType(dbPath: string, attribute: string): Promise<QueryResult> {
+        const code = `
+            (let [eid (datalevin.core/q '[:find ?e .
+                                          :in $ ?attr
+                                          :where [?e :levin.display/attribute ?attr]]
+                                        @conn "${this.escapeString(attribute)}")]
+              (when eid
+                (datalevin.core/transact! conn [[:db/retractEntity eid]]))
+              {:deleted (some? eid)})
+        `.trim();
+
+        return this.runCode(dbPath, code);
     }
 }

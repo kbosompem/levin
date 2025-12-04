@@ -7,7 +7,8 @@
 ## Features
 
 ### Database Explorer
-- Open databases directly via folder picker
+- Open local databases via folder picker
+- Connect to remote Datalevin servers with `dtlv://` URIs
 - Browse schema attributes with type information
 - View entity counts by namespace
 - Navigate database structure in the sidebar
@@ -53,8 +54,22 @@
 2. Ensure `dtlv` CLI is installed and in your PATH
 3. Open the Levin sidebar (lightning bolt icon)
 4. Click "Open Database" or use `Cmd+Alt+L O` (Mac) / `Ctrl+Alt+L O` (Windows/Linux)
-5. Select a Datalevin database folder
+5. Choose "Local Database" or "Remote Server"
 6. Start exploring!
+
+### Opening a Local Database
+
+1. Click "Open Database" and select "Local Database"
+2. Select a Datalevin database folder
+3. The database will appear in the sidebar
+
+### Connecting to a Remote Server
+
+1. Click "Open Database" and select "Remote Server"
+2. Enter the server URI in the format: `dtlv://username:password@host:port/database`
+   - Example: `dtlv://datalevin:datalevin@192.168.1.113:8898/ontology`
+   - Without auth: `dtlv://192.168.1.113:8898/test-db`
+3. The remote database will appear in the sidebar with a remote icon
 
 ### Creating a New Database
 
@@ -81,7 +96,17 @@
 Create `.dtlv.edn` files for your queries:
 
 ```clojure
+;; Local database
 {:db "/path/to/database"
+ :query [:find ?e ?name ?email
+         :where
+         [?e :user/name ?name]
+         [?e :user/email ?email]]
+ :args []
+ :limit 50}
+
+;; Remote server
+{:db "dtlv://username:password@host:port/database"
  :query [:find ?e ?name ?email
          :where
          [?e :user/name ?name]
@@ -131,11 +156,11 @@ npm run package
 
 ## Architecture
 
-Levin v0.2.0 uses a simple CLI-based architecture:
+Levin uses a simple CLI-based architecture:
 
 1. **Direct CLI communication** - All database operations execute through the `dtlv` command-line tool
 2. **No REPL required** - No need for Clojure, Calva, or jack-in workflows
-3. **Local-only** - Direct filesystem access, no HTTP servers
+3. **Local & Remote support** - Works with local databases and remote Datalevin servers
 4. **Stateless** - Each operation is independent
 
 ## License

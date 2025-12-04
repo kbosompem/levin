@@ -5,6 +5,81 @@ All notable changes to the Levin extension will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2024-12-04
+
+### Added
+
+- **Remote server support** - Connect to remote Datalevin servers
+  - Support for `dtlv://` URI format with authentication
+  - Format: `dtlv://username:password@host:port/database`
+  - New "Remote Server" option in Open Database dialog
+  - Remote databases display with remote icon in tree view
+  - All operations (query, schema, transactions) work seamlessly with remote servers
+
+---
+
+## [0.4.4] - 2024-12-01
+
+### Changed
+
+- **Display type dropdowns moved to Schema page** - Cleaner entity inspector
+  - Set display types (image, hyperlink, email, json, code) from Schema view
+  - Entity inspector now just uses the configured display types
+  - New "Display" column in schema table with dropdown per attribute
+
+---
+
+## [0.4.3] - 2024-11-30
+
+### Added
+
+- **Display type configuration** - Configure how attributes are rendered in Entity Inspector
+  - Dropdown on each attribute to set: image, hyperlink, email, json, code
+  - Settings stored per-database as `:levin.display/attribute` and `:levin.display/type`
+  - Auto-detects URLs and emails even without explicit configuration
+  - Hyperlinks are now clickable and open in browser
+
+### Fixed
+
+- **Image rendering** - Added CSP header to allow data: URIs in webview
+- **OLE image wrapper** - Now strips OLE headers to find actual BMP/JPEG/PNG data
+
+---
+
+## [0.4.2] - 2024-11-30
+
+### Added
+
+- **Image rendering in Entity Inspector** - Hex-encoded images now display inline
+  - Detects attributes with "photo", "image", "picture", or "avatar" in the name
+  - Converts hex data (0x...) to base64 and renders as image
+  - Supports JPEG, PNG, GIF, BMP formats via magic byte detection
+
+---
+
+## [0.4.1] - 2024-11-30
+
+### Fixed
+
+- **Large database support** - Fixed `MDB_MAP_RESIZED` error for databases with lots of data
+  - Now uses mapsize of 1GB when opening connections
+  - Fixes opening databases like ATP tennis with ~195K entities
+
+---
+
+## [0.4.0] - 2024-11-30
+
+### Added
+
+- **Datalog Rules Management** - Store and reuse query rules in the database
+  - Click "Rules" in tree to open Rules panel
+  - Create named rules with descriptions (e.g., `played`, `slam-finals`)
+  - Rules stored as `:levin.rule/name`, `:levin.rule/body`, `:levin.rule/description`
+  - Copy rules to clipboard for use in queries
+  - Use with `:in $ %` syntax in Datalog queries
+
+---
+
 ## [0.3.3] - 2024-11-30
 
 ### Fixed

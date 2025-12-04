@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { DtlvBridge, SchemaAttribute } from '../dtlv-bridge';
 
-export type TreeItemType = 'database' | 'schema-folder' | 'schema-item' | 'entities-folder' | 'entity-namespace' | 'relationships-folder' | 'queries-folder' | 'open-database';
+export type TreeItemType = 'database' | 'schema-folder' | 'schema-item' | 'entities-folder' | 'entity-namespace' | 'relationships-folder' | 'rules-folder' | 'queries-folder' | 'open-database';
 
 export class DatabaseTreeItem extends vscode.TreeItem {
     constructor(
@@ -9,7 +9,8 @@ export class DatabaseTreeItem extends vscode.TreeItem {
         public readonly collapsibleState: vscode.TreeItemCollapsibleState,
         public readonly itemType: TreeItemType,
         public readonly dbPath?: string,
-        public readonly data?: SchemaAttribute | { namespace: string; count: number }
+        public readonly data?: SchemaAttribute | { namespace: string; count: number },
+        public readonly isRemote?: boolean
     ) {
         super(label, collapsibleState);
         this.contextValue = itemType;
@@ -24,7 +25,7 @@ export class DatabaseTreeItem extends vscode.TreeItem {
     private setIcon(): void {
         switch (this.itemType) {
             case 'database':
-                this.iconPath = new vscode.ThemeIcon('database');
+                this.iconPath = new vscode.ThemeIcon(this.isRemote ? 'remote' : 'database');
                 break;
             case 'schema-folder':
                 this.iconPath = new vscode.ThemeIcon('symbol-structure');
@@ -40,6 +41,9 @@ export class DatabaseTreeItem extends vscode.TreeItem {
                 break;
             case 'relationships-folder':
                 this.iconPath = new vscode.ThemeIcon('git-merge');
+                break;
+            case 'rules-folder':
+                this.iconPath = new vscode.ThemeIcon('symbol-function');
                 break;
             case 'queries-folder':
                 this.iconPath = new vscode.ThemeIcon('search');
@@ -168,7 +172,9 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
                 db.name,
                 vscode.TreeItemCollapsibleState.Collapsed,
                 'database',
-                db.path
+                db.path,
+                undefined,
+                db.isRemote
             );
             items.push(this.registerItem(item));
         }
@@ -232,6 +238,20 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
             arguments: [relationshipsItem]
         };
         items.push(this.registerItem(relationshipsItem));
+
+        // Rules folder - clicking opens Rules panel
+        const rulesItem = new DatabaseTreeItem(
+            'Rules',
+            vscode.TreeItemCollapsibleState.None,
+            'rules-folder',
+            dbPath
+        );
+        rulesItem.command = {
+            command: 'levin.showRules',
+            title: 'Manage Rules',
+            arguments: [rulesItem]
+        };
+        items.push(this.registerItem(rulesItem));
 
         return items;
     }

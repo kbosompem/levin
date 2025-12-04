@@ -10,6 +10,7 @@ import { SchemaEditor } from './views/schema-editor';
 import { TransactionPanel } from './views/transaction-panel';
 import { EntityBrowser } from './views/entity-browser';
 import { RelationshipsPanel } from './views/relationships-panel';
+import { RulesPanel } from './views/rules-panel';
 import { QueryHistoryProvider } from './providers/query-history-provider';
 import { SavedQueriesProvider } from './providers/saved-queries-provider';
 
@@ -23,6 +24,7 @@ let schemaEditor: SchemaEditor | undefined;
 let transactionPanel: TransactionPanel | undefined;
 let entityBrowser: EntityBrowser | undefined;
 let relationshipsPanel: RelationshipsPanel | undefined;
+let rulesPanel: RulesPanel | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     console.log('Levin extension is activating...');
@@ -98,19 +100,50 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Open Database command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.openDatabase', async () => {
-            const options: vscode.OpenDialogOptions = {
-                canSelectFiles: false,
-                canSelectFolders: true,
-                canSelectMany: false,
-                openLabel: 'Open Database',
-                title: 'Select Datalevin Database Folder'
-            };
+            // Ask user if they want to connect to local or remote
+            const choice = await vscode.window.showQuickPick([
+                { label: '$(folder) Local Database', value: 'local' },
+                { label: '$(remote) Remote Server', value: 'remote' }
+            ], {
+                placeHolder: 'Select database type'
+            });
 
-            const result = await vscode.window.showOpenDialog(options);
+            if (!choice) { return; }
 
-            if (result && result[0]) {
-                const dbPath = result[0].fsPath;
-                openDatabase(context, dbPath);
+            if (choice.value === 'local') {
+                const options: vscode.OpenDialogOptions = {
+                    canSelectFiles: false,
+                    canSelectFolders: true,
+                    canSelectMany: false,
+                    openLabel: 'Open Database',
+                    title: 'Select Datalevin Database Folder'
+                };
+
+                const result = await vscode.window.showOpenDialog(options);
+
+                if (result && result[0]) {
+                    const dbPath = result[0].fsPath;
+                    openDatabase(context, dbPath);
+                }
+            } else {
+                // Remote server
+                const serverUri = await vscode.window.showInputBox({
+                    prompt: 'Enter Datalevin server URI',
+                    placeHolder: 'dtlv://username:password@host:port/database',
+                    validateInput: (value) => {
+                        if (!value || value.trim().length === 0) {
+                            return 'Server URI is required';
+                        }
+                        if (!value.startsWith('dtlv://')) {
+                            return 'URI must start with dtlv://';
+                        }
+                        return null;
+                    }
+                });
+
+                if (serverUri) {
+                    openDatabase(context, serverUri);
+                }
             }
         })
     );
@@ -283,6 +316,19 @@ function registerCommands(context: vscode.ExtensionContext): void {
             const finalDbPath = dbPath || await selectDatabase();
             if (finalDbPath) {
                 await showRelationshipsPanel(context, finalDbPath);
+            } else {
+                vscode.window.showErrorMessage('Could not determine database path');
+            }
+        })
+    );
+
+    // Show Rules command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.showRules', async (item?: DatabaseTreeItem) => {
+            const dbPath = extractDbPath(item);
+            const finalDbPath = dbPath || await selectDatabase();
+            if (finalDbPath) {
+                await showRulesPanel(context, finalDbPath);
             } else {
                 vscode.window.showErrorMessage('Could not determine database path');
             }
@@ -744,6 +790,16 @@ async function showRelationshipsPanel(
         relationshipsPanel = new RelationshipsPanel(context, dtlvBridge);
     }
     await relationshipsPanel.show(dbPath);
+}
+
+async function showRulesPanel(
+    context: vscode.ExtensionContext,
+    dbPath: string
+): Promise<void> {
+    if (!rulesPanel) {
+        rulesPanel = new RulesPanel(context, dtlvBridge);
+    }
+    await rulesPanel.show(dbPath);
 }
 
 export function deactivate(): void {
