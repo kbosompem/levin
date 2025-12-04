@@ -27,12 +27,17 @@ let entityBrowser: EntityBrowser | undefined;
 let relationshipsPanel: RelationshipsPanel | undefined;
 let rulesPanel: RulesPanel | undefined;
 let errorPanel: ErrorPanel | undefined;
+let outputChannel: vscode.OutputChannel;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     console.log('Levin extension is activating...');
 
+    // Create output channel
+    outputChannel = vscode.window.createOutputChannel('Datalevin');
+    context.subscriptions.push(outputChannel);
+
     // Initialize dtlv bridge
-    dtlvBridge = new DtlvBridge();
+    dtlvBridge = new DtlvBridge(outputChannel);
 
     // Check if dtlv is installed
     const dtlvInstalled = await dtlvBridge.checkDtlvInstalled();
@@ -424,6 +429,13 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
             await vscode.env.clipboard.writeText(clojureCode);
             vscode.window.showInformationMessage('Query copied as Clojure code');
+        })
+    );
+
+    // Show Output command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.showOutput', () => {
+            outputChannel.show();
         })
     );
 

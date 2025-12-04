@@ -118,6 +118,11 @@
       {
         "command": "levin.showRules",
         "title": "Levin: Manage Rules"
+      },
+      {
+        "command": "levin.showOutput",
+        "title": "Levin: Show Output",
+        "icon": "$(output)"
       }
     ],
     "viewsContainers": {
@@ -154,6 +159,11 @@
         },
         {
           "command": "levin.refreshExplorer",
+          "when": "view == levin.databases",
+          "group": "navigation"
+        },
+        {
+          "command": "levin.showOutput",
           "when": "view == levin.databases",
           "group": "navigation"
         }

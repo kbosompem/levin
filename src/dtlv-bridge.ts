@@ -31,14 +31,28 @@ export interface DatabaseInfo {
 export class DtlvBridge {
     private dtlvPath: string = 'dtlv';
     private openDatabases: Map<string, DatabaseInfo> = new Map();
+    private outputChannel?: vscode.OutputChannel;
 
-    constructor() {
+    constructor(outputChannel?: vscode.OutputChannel) {
+        this.outputChannel = outputChannel;
         this.loadSettings();
     }
 
     private loadSettings(): void {
         const config = vscode.workspace.getConfiguration('levin');
         this.dtlvPath = config.get<string>('dtlvPath', 'dtlv');
+    }
+
+    /**
+     * Log message to output channel
+     */
+    private log(message: string, show: boolean = false): void {
+        if (this.outputChannel) {
+            this.outputChannel.appendLine(message);
+            if (show) {
+                this.outputChannel.show(true);
+            }
+        }
     }
 
     /**
@@ -588,7 +602,60 @@ export class DtlvBridge {
     /**
      * Execute dtlv command with code
      */
-    private execDtlv(code: string): Promise<QueryResult> {
+    private async execDtlv(code: string, retries: number = 0, maxRetries: number = 3): Promise<QueryResult> {
+        // Log the query
+        this.log('\n' + '='.repeat(60));
+        this.log(`[${new Date().toISOString()}] Executing query...`);
+        this.log('Code:\n' + code);
+        this.log('='.repeat(60));
+
+        const result = await this.execDtlvInternal(code);
+
+        // Check if this is a remote connection failure
+        const isRemoteConnectionError = result.error && (
+            result.error.includes('Connection refused') ||
+            result.error.includes('Unable to connect') ||
+            result.error.includes('java.net.ConnectException') ||
+            result.error.includes('Connection error')
+        );
+
+        if (!result.success && isRemoteConnectionError && retries < maxRetries) {
+            const attempt = retries + 1;
+            this.log(`\n⚠️  Connection failed. Retrying (${attempt}/${maxRetries})...`, true);
+
+            // Show notification to user
+            vscode.window.showWarningMessage(
+                `Connection to remote database failed. Retrying (${attempt}/${maxRetries})...`
+            );
+
+            // Wait before retrying (exponential backoff)
+            const delay = Math.min(1000 * Math.pow(2, retries), 5000);
+            await new Promise(resolve => setTimeout(resolve, delay));
+
+            return this.execDtlv(code, retries + 1, maxRetries);
+        }
+
+        // Log the result
+        if (result.success) {
+            this.log('\n✓ Success');
+            this.log('Result:\n' + JSON.stringify(result.data, null, 2));
+        } else {
+            this.log('\n✗ Error: ' + result.error, true);
+
+            if (isRemoteConnectionError && retries >= maxRetries) {
+                vscode.window.showErrorMessage(
+                    `Failed to connect to remote database after ${maxRetries} retries. Check connection and credentials.`
+                );
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Internal method to execute dtlv command (single attempt)
+     */
+    private execDtlvInternal(code: string): Promise<QueryResult> {
         return new Promise((resolve) => {
             let stdout = '';
             let stderr = '';

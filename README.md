@@ -2,7 +2,7 @@
 
 > Browse, query, and manage Datalevin databases in VS Code
 
-**Levin** (meaning "lightning" in German) is a VS Code extension that provides a visual interface for [Datalevin](https://github.com/juji-io/datalevin) databases. It communicates directly with the `dtlv` CLI, requiring no REPL or Clojure setup.
+**Levin** (archaic English for "lightning") is a VS Code extension that provides a visual interface for [Datalevin](https://github.com/juji-io/datalevin) databases. It communicates directly with the `dtlv` CLI, requiring no REPL or Clojure setup.
 
 ## Features
 
