@@ -31,50 +31,67 @@ export class EntityInspector {
     async show(dbPath: string, entityId: number): Promise<void> {
         this.currentDbPath = dbPath;
 
-        // Fetch entity data and display types in parallel
-        const [entityResult, displayTypes] = await Promise.all([
-            this.dtlvBridge.getEntity(dbPath, entityId),
-            this.dtlvBridge.getDisplayTypes(dbPath)
-        ]);
-
-        if (!entityResult.success) {
-            vscode.window.showErrorMessage(`Failed to load entity: ${entityResult.error}`);
-            return;
+        // Show loading state if panel exists
+        if (this.panel) {
+            this.panel.webview.postMessage({ command: 'loading', isLoading: true });
         }
 
-        this.currentEntity = entityResult.data as EntityData;
-        this.displayTypes = displayTypes;
+        try {
+            // Fetch entity data and display types in parallel
+            const [entityResult, displayTypes] = await Promise.all([
+                this.dtlvBridge.getEntity(dbPath, entityId),
+                this.dtlvBridge.getDisplayTypes(dbPath)
+            ]);
 
-        // Add to history
-        this.history.push({ dbPath, eid: entityId });
-        if (this.history.length > 50) {
-            this.history.shift();
-        }
-
-        if (!this.panel) {
-            this.panel = vscode.window.createWebviewPanel(
-                'levinEntity',
-                `Entity ${entityId}`,
-                vscode.ViewColumn.Beside,
-                {
-                    enableScripts: true,
-                    retainContextWhenHidden: true
+            if (!entityResult.success) {
+                vscode.window.showErrorMessage(`Failed to load entity: ${entityResult.error}`);
+                if (this.panel) {
+                    this.panel.webview.postMessage({ command: 'loading', isLoading: false });
                 }
-            );
+                return;
+            }
 
-            this.panel.onDidDispose(() => {
-                this.panel = undefined;
-            });
+            this.currentEntity = entityResult.data as EntityData;
+            this.displayTypes = displayTypes;
 
-            this.panel.webview.onDidReceiveMessage(
-                this.handleMessage.bind(this),
-                undefined
-            );
-        } else {
-            this.panel.title = `Entity ${entityId}`;
+            // Add to history
+            this.history.push({ dbPath, eid: entityId });
+            if (this.history.length > 50) {
+                this.history.shift();
+            }
+
+            if (!this.panel) {
+                this.panel = vscode.window.createWebviewPanel(
+                    'levinEntity',
+                    `Entity ${entityId}`,
+                    vscode.ViewColumn.Beside,
+                    {
+                        enableScripts: true,
+                        retainContextWhenHidden: true
+                    }
+                );
+
+                this.panel.onDidDispose(() => {
+                    this.panel = undefined;
+                });
+
+                this.panel.webview.onDidReceiveMessage(
+                    this.handleMessage.bind(this),
+                    undefined
+                );
+            } else {
+                this.panel.title = `Entity ${entityId}`;
+            }
+
+            this.updateContent();
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to load entity: ${error}`);
+        } finally {
+            // Hide loading state
+            if (this.panel) {
+                this.panel.webview.postMessage({ command: 'loading', isLoading: false });
+            }
         }
-
-        this.updateContent();
     }
 
     private async handleMessage(message: { command: string; [key: string]: unknown }): Promise<void> {
@@ -248,9 +265,50 @@ export class EntityInspector {
             text-overflow: ellipsis;
             white-space: nowrap;
         }
+
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .loading-overlay.visible {
+            display: flex;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--vscode-progressBar-background);
+            border-top-color: var(--vscode-button-background);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: var(--text-color);
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading entity...</div>
+    </div>
     <div class="header">
         <h2>Entity ${entity.eid}</h2>
         <div class="actions">
@@ -293,7 +351,40 @@ export class EntityInspector {
 
     <script>
         const vscode = acquireVsCodeApi();
-        function navigate(entityId) { vscode.postMessage({ command: 'navigate', entityId }); }
+        let isNavigating = false;
+        let lastNavigationTime = 0;
+        const NAVIGATE_DEBOUNCE_MS = 500;
+
+        // Listen for messages from extension
+        window.addEventListener('message', event => {
+            const message = event.data;
+            if (message.command === 'loading') {
+                const overlay = document.getElementById('loadingOverlay');
+                if (overlay) {
+                    overlay.classList.toggle('visible', message.isLoading);
+                }
+            }
+        });
+
+        function navigate(entityId) {
+            // Debounce navigation to prevent rapid successive calls
+            const now = Date.now();
+            if (isNavigating || (now - lastNavigationTime < NAVIGATE_DEBOUNCE_MS)) {
+                console.log('Navigation ignored (debounced)');
+                return;
+            }
+
+            isNavigating = true;
+            lastNavigationTime = now;
+
+            vscode.postMessage({ command: 'navigate', entityId });
+
+            // Reset after debounce period
+            setTimeout(() => {
+                isNavigating = false;
+            }, NAVIGATE_DEBOUNCE_MS);
+        }
+
         function goBack() { vscode.postMessage({ command: 'back' }); }
         function copyEdn() { vscode.postMessage({ command: 'copyEdn' }); }
         function refresh() { vscode.postMessage({ command: 'refresh' }); }

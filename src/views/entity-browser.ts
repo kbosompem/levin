@@ -108,18 +108,32 @@ export class EntityBrowser {
         const state = this.panels.get(dbPath);
         if (!state) return;
 
-        // Query all entities with their first non-db attribute for preview
-        const result = await this.dtlvBridge.queryEntitiesWithPreview(dbPath);
+        // Show loading state
+        state.panel.webview.postMessage({ command: 'loading', isLoading: true });
 
-        if (result.success && result.data) {
-            state.entities = result.data as EntityRow[];
-            state.namespaces = [...new Set(state.entities.map(e => e.namespace).filter(Boolean))] as string[];
-            state.namespaces.sort();
-            this.applyFilter(dbPath);
-        } else {
+        try {
+            // Query all entities with their first non-db attribute for preview
+            const result = await this.dtlvBridge.queryEntitiesWithPreview(dbPath);
+
+            if (result.success && result.data) {
+                state.entities = result.data as EntityRow[];
+                state.namespaces = [...new Set(state.entities.map(e => e.namespace).filter(Boolean))] as string[];
+                state.namespaces.sort();
+                this.applyFilter(dbPath);
+            } else {
+                state.entities = [];
+                state.filteredEntities = [];
+                state.namespaces = [];
+                vscode.window.showErrorMessage(`Failed to load entities: ${result.error || 'Unknown error'}`);
+            }
+        } catch (error) {
             state.entities = [];
             state.filteredEntities = [];
             state.namespaces = [];
+            vscode.window.showErrorMessage(`Failed to load entities: ${error}`);
+        } finally {
+            // Hide loading state
+            state.panel.webview.postMessage({ command: 'loading', isLoading: false });
         }
     }
 
@@ -266,9 +280,58 @@ export class EntityBrowser {
             padding: 40px;
             color: var(--vscode-descriptionForeground);
         }
+
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .loading-overlay.visible {
+            display: flex;
+        }
+
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid var(--vscode-progressBar-background);
+            border-top-color: var(--vscode-button-background);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: var(--text-color);
+            font-size: 14px;
+        }
+
+        .loading-details {
+            color: var(--vscode-descriptionForeground);
+            font-size: 12px;
+            max-width: 400px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading entities...</div>
+        <div class="loading-details">This may take a minute for large databases or remote connections</div>
+    </div>
     <div class="toolbar">
         <div class="toolbar-group">
             <label>Namespace:</label>
@@ -328,6 +391,20 @@ export class EntityBrowser {
 
     <script>
         const vscode = acquireVsCodeApi();
+        let isEntityClickInProgress = false;
+        let lastEntityClickTime = 0;
+        const CLICK_DEBOUNCE_MS = 500;
+
+        // Listen for messages from extension
+        window.addEventListener('message', event => {
+            const message = event.data;
+            if (message.command === 'loading') {
+                const overlay = document.getElementById('loadingOverlay');
+                if (overlay) {
+                    overlay.classList.toggle('visible', message.isLoading);
+                }
+            }
+        });
 
         function changePage(page) {
             vscode.postMessage({ command: 'changePage', page });
@@ -344,7 +421,22 @@ export class EntityBrowser {
         }
 
         function inspectEntity(entityId) {
+            // Debounce clicks to prevent rapid successive calls
+            const now = Date.now();
+            if (isEntityClickInProgress || (now - lastEntityClickTime < CLICK_DEBOUNCE_MS)) {
+                console.log('Entity click ignored (debounced)');
+                return;
+            }
+
+            isEntityClickInProgress = true;
+            lastEntityClickTime = now;
+
             vscode.postMessage({ command: 'inspectEntity', entityId });
+
+            // Reset after debounce period
+            setTimeout(() => {
+                isEntityClickInProgress = false;
+            }, CLICK_DEBOUNCE_MS);
         }
 
         function jumpToPage() {

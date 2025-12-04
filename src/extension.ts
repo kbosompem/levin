@@ -11,6 +11,7 @@ import { TransactionPanel } from './views/transaction-panel';
 import { EntityBrowser } from './views/entity-browser';
 import { RelationshipsPanel } from './views/relationships-panel';
 import { RulesPanel } from './views/rules-panel';
+import { ErrorPanel } from './views/error-panel';
 import { QueryHistoryProvider } from './providers/query-history-provider';
 import { SavedQueriesProvider } from './providers/saved-queries-provider';
 
@@ -25,6 +26,7 @@ let transactionPanel: TransactionPanel | undefined;
 let entityBrowser: EntityBrowser | undefined;
 let relationshipsPanel: RelationshipsPanel | undefined;
 let rulesPanel: RulesPanel | undefined;
+let errorPanel: ErrorPanel | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     console.log('Levin extension is activating...');
@@ -733,7 +735,14 @@ async function executeQuery(context: vscode.ExtensionContext, queryText: string)
                 }
                 resultsPanel.show(result.data, dbPath);
             } else {
-                vscode.window.showErrorMessage(`Query error: ${result.error}`);
+                // Show error in dedicated error panel
+                if (!errorPanel) {
+                    errorPanel = new ErrorPanel();
+                }
+                errorPanel.show(result.error || 'Unknown error', queryPortion);
+
+                // Also show a brief notification
+                vscode.window.showErrorMessage('Query failed - see error panel for details');
             }
         });
     } catch (error) {

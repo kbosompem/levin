@@ -71,6 +71,65 @@ export class SchemaEditor {
             case 'setDisplayType':
                 await this.setDisplayType(message.attribute as string, message.displayType as string, dbPath);
                 break;
+            case 'exportSchema':
+                await this.exportSchema(dbPath);
+                break;
+        }
+    }
+
+    private async exportSchema(dbPath: string): Promise<void> {
+        const schema = this.schema;
+        if (schema.length === 0) {
+            vscode.window.showWarningMessage('No schema to export');
+            return;
+        }
+
+        // Convert to EDN format (Datomic-style schema map)
+        const ednLines: string[] = ['{'];
+
+        schema.forEach((attr, index) => {
+            const props: string[] = [];
+
+            if (attr.valueType) {
+                props.push(`:db/valueType :db.type/${attr.valueType}`);
+            }
+            if (attr.cardinality) {
+                props.push(`:db/cardinality :db.cardinality/${attr.cardinality}`);
+            }
+            if (attr.unique) {
+                props.push(`:db/unique :db.unique/${attr.unique}`);
+            }
+            if (attr.index) {
+                props.push(':db/index true');
+            }
+            if (attr.fulltext) {
+                props.push(':db/fulltext true');
+            }
+            if (attr.isComponent) {
+                props.push(':db/isComponent true');
+            }
+
+            const propsStr = props.length > 0 ? `{${props.join('\n                ')} :db.install/_attribute :db.part/db}` : '{}';
+            const comma = index < schema.length - 1 ? '' : '';
+            ednLines.push(` ${attr.attribute} ${propsStr}${comma}`);
+        });
+
+        ednLines.push('}');
+        const ednContent = ednLines.join('\n');
+
+        // Prompt for save location
+        const dbName = dbPath.split('/').pop() || 'database';
+        const uri = await vscode.window.showSaveDialog({
+            defaultUri: vscode.Uri.file(`${dbName}-schema.edn`),
+            filters: {
+                'EDN Files': ['edn'],
+                'All Files': ['*']
+            }
+        });
+
+        if (uri) {
+            await vscode.workspace.fs.writeFile(uri, Buffer.from(ednContent, 'utf8'));
+            vscode.window.showInformationMessage(`Schema exported to ${uri.fsPath}`);
         }
     }
 
@@ -163,6 +222,13 @@ export class SchemaEditor {
         .section h3 { margin: 0 0 16px 0; }
 
         .form-row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 12px;
+            align-items: center;
+        }
+
+        .filter-row {
             display: flex;
             gap: 16px;
             margin-bottom: 12px;
@@ -303,6 +369,7 @@ export class SchemaEditor {
         <h3>Existing Attributes (${this.schema.length})</h3>
         <div class="filter-row">
             <input type="text" id="filter" placeholder="Filter attributes..." oninput="filterAttributes()" style="width: 300px;" />
+            <button onclick="exportSchema()" style="margin-left: auto;">Export Schema to File</button>
         </div>
         <table id="schemaTable">
             <thead>
@@ -393,6 +460,10 @@ export class SchemaEditor {
 
         function setDisplayType(attribute, displayType) {
             vscode.postMessage({ command: 'setDisplayType', attribute, displayType });
+        }
+
+        function exportSchema() {
+            vscode.postMessage({ command: 'exportSchema' });
         }
     </script>
 </body>
