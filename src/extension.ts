@@ -102,6 +102,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Load recently opened databases
     loadRecentDatabases(context);
 
+    // Watch for configuration changes to detect databases opened in other instances
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration('levin.recentDatabases')) {
+                // Configuration changed, reload databases from shared config
+                loadRecentDatabases(context);
+                databaseTreeProvider.refresh();
+            }
+        })
+    );
+
     console.log('Levin extension activated successfully');
 }
 
@@ -109,49 +120,98 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Open Database command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.openDatabase', async () => {
-            // Ask user if they want to connect to local or remote
-            const choice = await vscode.window.showQuickPick([
-                { label: '$(folder) Local Database', value: 'local' },
-                { label: '$(remote) Remote Server', value: 'remote' }
+            // First ask: KV Store or Datalog Database
+            const dbTypeChoice = await vscode.window.showQuickPick([
+                { label: '$(database) Key-Value Store', description: 'Simple key-value storage', value: 'kv' },
+                { label: '$(symbol-namespace) Datalog Database', description: 'Entity-attribute-value store with queries', value: 'datalog' }
             ], {
                 placeHolder: 'Select database type'
             });
 
-            if (!choice) { return; }
+            if (!dbTypeChoice) { return; }
 
-            if (choice.value === 'local') {
-                const options: vscode.OpenDialogOptions = {
-                    canSelectFiles: false,
-                    canSelectFolders: true,
-                    canSelectMany: false,
-                    openLabel: 'Open Database',
-                    title: 'Select Datalevin Database Folder'
-                };
+            // Then ask: Local or Remote
+            const locationChoice = await vscode.window.showQuickPick([
+                { label: '$(folder) Local Database', value: 'local' },
+                { label: '$(remote) Remote Server', value: 'remote' }
+            ], {
+                placeHolder: 'Select database location'
+            });
 
-                const result = await vscode.window.showOpenDialog(options);
+            if (!locationChoice) { return; }
 
-                if (result && result[0]) {
-                    const dbPath = result[0].fsPath;
-                    openDatabase(context, dbPath);
+            if (dbTypeChoice.value === 'kv') {
+                // KV Store path
+                let dbPath: string | undefined;
+
+                if (locationChoice.value === 'local') {
+                    const result = await vscode.window.showOpenDialog({
+                        canSelectFiles: false,
+                        canSelectFolders: true,
+                        canSelectMany: false,
+                        openLabel: 'Open KV Database',
+                        title: 'Select Datalevin KV Database Folder'
+                    });
+
+                    if (result && result[0]) {
+                        dbPath = result[0].fsPath;
+                    }
+                } else {
+                    // Remote server
+                    dbPath = await vscode.window.showInputBox({
+                        prompt: 'Enter Datalevin server URI',
+                        placeHolder: 'dtlv://username:password@host:port/database',
+                        validateInput: (value) => {
+                            if (!value || value.trim().length === 0) {
+                                return 'Server URI is required';
+                            }
+                            if (!value.startsWith('dtlv://')) {
+                                return 'URI must start with dtlv://';
+                            }
+                            return null;
+                        }
+                    });
+                }
+
+                if (dbPath) {
+                    await showKvStore(context, dbPath);
                 }
             } else {
-                // Remote server
-                const serverUri = await vscode.window.showInputBox({
-                    prompt: 'Enter Datalevin server URI',
-                    placeHolder: 'dtlv://username:password@host:port/database',
-                    validateInput: (value) => {
-                        if (!value || value.trim().length === 0) {
-                            return 'Server URI is required';
-                        }
-                        if (!value.startsWith('dtlv://')) {
-                            return 'URI must start with dtlv://';
-                        }
-                        return null;
-                    }
-                });
+                // Datalog Database path
+                if (locationChoice.value === 'local') {
+                    const options: vscode.OpenDialogOptions = {
+                        canSelectFiles: false,
+                        canSelectFolders: true,
+                        canSelectMany: false,
+                        openLabel: 'Open Database',
+                        title: 'Select Datalevin Database Folder'
+                    };
 
-                if (serverUri) {
-                    openDatabase(context, serverUri);
+                    const result = await vscode.window.showOpenDialog(options);
+
+                    if (result && result[0]) {
+                        const dbPath = result[0].fsPath;
+                        openDatabase(context, dbPath);
+                    }
+                } else {
+                    // Remote server
+                    const serverUri = await vscode.window.showInputBox({
+                        prompt: 'Enter Datalevin server URI',
+                        placeHolder: 'dtlv://username:password@host:port/database',
+                        validateInput: (value) => {
+                            if (!value || value.trim().length === 0) {
+                                return 'Server URI is required';
+                            }
+                            if (!value.startsWith('dtlv://')) {
+                                return 'URI must start with dtlv://';
+                            }
+                            return null;
+                        }
+                    });
+
+                    if (serverUri) {
+                        openDatabase(context, serverUri);
+                    }
                 }
             }
         })
@@ -232,6 +292,29 @@ function registerCommands(context: vscode.ExtensionContext): void {
         })
     );
 
+    // Open Query Node command - opens new query or activates last unsaved query
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.openQueryNode', async (item?: DatabaseTreeItem) => {
+            const dbPath = extractDbPath(item);
+            if (!dbPath) { return; }
+
+            // Try to find an existing unsaved query document for this database
+            const existingDoc = vscode.workspace.textDocuments.find(doc => {
+                return doc.languageId === 'datalevin-query' &&
+                       doc.isUntitled &&
+                       doc.getText().includes(`:db "${dbPath}"`);
+            });
+
+            if (existingDoc) {
+                // Activate the existing unsaved query
+                await vscode.window.showTextDocument(existingDoc);
+            } else {
+                // Create a new query
+                await createNewQuery(dbPath);
+            }
+        })
+    );
+
     // Run Query command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.runQuery', async () => {
@@ -260,6 +343,8 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Refresh Explorer command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.refreshExplorer', () => {
+            // Reload databases from shared config (picks up changes from other instances)
+            loadRecentDatabases(context);
             databaseTreeProvider.refresh();
         })
     );
@@ -354,9 +439,17 @@ function registerCommands(context: vscode.ExtensionContext): void {
         })
     );
 
-    // Show KV Store command
+    // Show KV Store command (redirects to openDatabase for better UX)
     context.subscriptions.push(
-        vscode.commands.registerCommand('levin.showKvStore', async (item?: DatabaseTreeItem) => {
+        vscode.commands.registerCommand('levin.showKvStore', async () => {
+            // Simply call openDatabase command which now handles KV stores
+            vscode.commands.executeCommand('levin.openDatabase');
+        })
+    );
+
+    // Open KV Store command (for tree item)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.openKvStore', async (item?: DatabaseTreeItem) => {
             const dbPath = extractDbPath(item) || await selectDatabase();
             if (dbPath) {
                 await showKvStore(context, dbPath);
@@ -374,8 +467,43 @@ function registerCommands(context: vscode.ExtensionContext): void {
                     prompt: 'Enter a name for this query',
                     placeHolder: 'My Query'
                 });
-                if (name) {
-                    await savedQueriesProvider.addQuery(name, queryText);
+                if (!name) { return; }
+
+                // Ask for folder (optional)
+                const existingFolders = savedQueriesProvider.getFolders();
+                const folderItems = [
+                    { label: '$(files) No Folder', description: 'Save without a folder', folder: undefined },
+                    { label: '$(new-folder) New Folder...', description: 'Create a new folder', folder: '__new__' },
+                    ...existingFolders.map(f => ({ label: `$(folder) ${f}`, folder: f }))
+                ];
+
+                const selectedFolder = await vscode.window.showQuickPick(folderItems, {
+                    placeHolder: 'Select a folder (optional)'
+                });
+
+                let folder: string | undefined = undefined;
+                if (selectedFolder) {
+                    if (selectedFolder.folder === '__new__') {
+                        // Create new folder
+                        folder = await vscode.window.showInputBox({
+                            prompt: 'Enter folder name',
+                            placeHolder: 'My Folder'
+                        });
+                        if (!folder) { return; }
+                    } else {
+                        folder = selectedFolder.folder;
+                    }
+                }
+
+                const savedPath = await savedQueriesProvider.addQuery(name, queryText, undefined, folder);
+                if (savedPath) {
+                    // Close the current unsaved editor
+                    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+                    // Open the saved file
+                    const doc = await vscode.workspace.openTextDocument(savedPath);
+                    await vscode.window.showTextDocument(doc);
+                    vscode.window.showInformationMessage(`Query saved as "${name}"`);
+                } else {
                     vscode.window.showInformationMessage(`Query saved as "${name}"`);
                 }
             }
@@ -409,6 +537,17 @@ function registerCommands(context: vscode.ExtensionContext): void {
                     language: 'datalevin-query',
                     content: queryText
                 });
+                await vscode.window.showTextDocument(doc);
+            }
+        })
+    );
+
+    // Open Saved Query File (for queries saved to disk)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.openSavedQueryFile', async (item?: { savedQuery?: { filePath?: string } }) => {
+            const filePath = item?.savedQuery?.filePath;
+            if (filePath) {
+                const doc = await vscode.workspace.openTextDocument(filePath);
                 await vscode.window.showTextDocument(doc);
             }
         })
@@ -840,8 +979,12 @@ async function showKvStore(
     dbPath: string
 ): Promise<void> {
     if (!kvStorePanel) {
-        kvStorePanel = new KvStorePanel(dtlvBridge);
+        kvStorePanel = new KvStorePanel(dtlvBridge, context);
     }
+    // Register KV database with the bridge so it appears in the tree
+    dtlvBridge.openDatabase(dbPath);
+    addToRecentDatabases(context, dbPath);
+    databaseTreeProvider.refresh();
     await kvStorePanel.show(dbPath);
 }
 

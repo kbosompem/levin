@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { DtlvBridge, SchemaAttribute } from '../dtlv-bridge';
 
-export type TreeItemType = 'database' | 'schema-folder' | 'schema-item' | 'entities-folder' | 'entity-namespace' | 'relationships-folder' | 'rules-folder' | 'queries-folder' | 'open-database';
+export type TreeItemType = 'database' | 'schema-folder' | 'schema-item' | 'entities-folder' | 'entity-namespace' | 'relationships-folder' | 'rules-folder' | 'kv-store-folder' | 'queries-folder' | 'query-node' | 'open-database';
 
 export class DatabaseTreeItem extends vscode.TreeItem {
     constructor(
@@ -45,8 +45,14 @@ export class DatabaseTreeItem extends vscode.TreeItem {
             case 'rules-folder':
                 this.iconPath = new vscode.ThemeIcon('symbol-function');
                 break;
+            case 'kv-store-folder':
+                this.iconPath = new vscode.ThemeIcon('key');
+                break;
             case 'queries-folder':
                 this.iconPath = new vscode.ThemeIcon('search');
+                break;
+            case 'query-node':
+                this.iconPath = new vscode.ThemeIcon('file-code');
                 break;
             case 'open-database':
                 this.iconPath = new vscode.ThemeIcon('folder-opened');
@@ -197,6 +203,20 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     private async getDatabaseChildren(dbPath: string): Promise<DatabaseTreeItem[]> {
         const items: DatabaseTreeItem[] = [];
 
+        // Query node - clicking opens a new query tab or activates the last unsaved query
+        const queryNode = new DatabaseTreeItem(
+            'Query',
+            vscode.TreeItemCollapsibleState.None,
+            'query-node',
+            dbPath
+        );
+        queryNode.command = {
+            command: 'levin.openQueryNode',
+            title: 'Open Query',
+            arguments: [queryNode]
+        };
+        items.push(this.registerItem(queryNode));
+
         // Schema folder - clicking opens Schema Editor panel
         const schemaFolder = new DatabaseTreeItem(
             'Schema',
@@ -252,6 +272,20 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
             arguments: [rulesItem]
         };
         items.push(this.registerItem(rulesItem));
+
+        // Key-Value Store - clicking opens KV Store panel
+        const kvStoreItem = new DatabaseTreeItem(
+            'Key-Value Store',
+            vscode.TreeItemCollapsibleState.None,
+            'kv-store-folder',
+            dbPath
+        );
+        kvStoreItem.command = {
+            command: 'levin.openKvStore',
+            title: 'Open Key-Value Store',
+            arguments: [kvStoreItem]
+        };
+        items.push(this.registerItem(kvStoreItem));
 
         return items;
     }

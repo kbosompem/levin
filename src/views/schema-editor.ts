@@ -74,6 +74,49 @@ export class SchemaEditor {
             case 'exportSchema':
                 await this.exportSchema(dbPath);
                 break;
+            case 'importSchema':
+                await this.importSchema(dbPath);
+                break;
+        }
+    }
+
+    private async importSchema(dbPath: string): Promise<void> {
+        // Prompt for file selection
+        const uris = await vscode.window.showOpenDialog({
+            canSelectFiles: true,
+            canSelectMany: false,
+            filters: {
+                'EDN Files': ['edn'],
+                'All Files': ['*']
+            },
+            title: 'Select Schema File to Import'
+        });
+
+        if (!uris || uris.length === 0) {
+            return;
+        }
+
+        try {
+            const fileContent = await vscode.workspace.fs.readFile(uris[0]);
+            const ednContent = Buffer.from(fileContent).toString('utf-8');
+
+            // Import the schema using the dtlv bridge
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: 'Importing schema...',
+                cancellable: false
+            }, async () => {
+                const result = await this.dtlvBridge.transactDatomicSchema(dbPath, ednContent);
+
+                if (result.success) {
+                    vscode.window.showInformationMessage('Schema imported successfully!');
+                    await this.refresh(dbPath);
+                } else {
+                    vscode.window.showErrorMessage(`Failed to import schema: ${result.error}`);
+                }
+            });
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to read schema file: ${error}`);
         }
     }
 
@@ -369,7 +412,8 @@ export class SchemaEditor {
         <h3>Existing Attributes (${this.schema.length})</h3>
         <div class="filter-row">
             <input type="text" id="filter" placeholder="Filter attributes..." oninput="filterAttributes()" style="width: 300px;" />
-            <button onclick="exportSchema()" style="margin-left: auto;">Export Schema to File</button>
+            <button onclick="importSchema()" style="margin-left: auto;">Import Schema from File</button>
+            <button onclick="exportSchema()">Export Schema to File</button>
         </div>
         <table id="schemaTable">
             <thead>
@@ -460,6 +504,10 @@ export class SchemaEditor {
 
         function setDisplayType(attribute, displayType) {
             vscode.postMessage({ command: 'setDisplayType', attribute, displayType });
+        }
+
+        function importSchema() {
+            vscode.postMessage({ command: 'importSchema' });
         }
 
         function exportSchema() {

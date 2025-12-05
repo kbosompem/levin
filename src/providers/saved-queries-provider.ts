@@ -1,14 +1,23 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 
 interface SavedQuery {
     name: string;
     query: string;
     createdAt: number;
+    filePath?: string; // Path to the saved .dtlv.edn file
+    folder?: string; // Optional folder name for organization
 }
 
-export class SavedQueriesProvider implements vscode.TreeDataProvider<SavedQueryItem> {
-    private _onDidChangeTreeData: vscode.EventEmitter<SavedQueryItem | undefined | null | void> = new vscode.EventEmitter<SavedQueryItem | undefined | null | void>();
-    readonly onDidChangeTreeData: vscode.Event<SavedQueryItem | undefined | null | void> = this._onDidChangeTreeData.event;
+interface QueryFolder {
+    name: string;
+    queries: SavedQuery[];
+}
+
+export class SavedQueriesProvider implements vscode.TreeDataProvider<SavedQueryItem | FolderItem> {
+    private _onDidChangeTreeData: vscode.EventEmitter<SavedQueryItem | FolderItem | undefined | null | void> = new vscode.EventEmitter<SavedQueryItem | FolderItem | undefined | null | void>();
+    readonly onDidChangeTreeData: vscode.Event<SavedQueryItem | FolderItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
     private savedQueries: SavedQuery[] = [];
     private readonly storageKey = 'levin.savedQueries';
@@ -28,30 +37,67 @@ export class SavedQueriesProvider implements vscode.TreeDataProvider<SavedQueryI
         this.context.globalState.update(this.storageKey, this.savedQueries);
     }
 
-    async addQuery(name: string, queryText: string): Promise<void> {
+    async addQuery(name: string, queryText: string, filePath?: string, folder?: string): Promise<string | undefined> {
         // Check if name already exists
         const existingIndex = this.savedQueries.findIndex(q => q.name === name);
+
+        // If no filePath provided, try to save to workspace
+        let savedPath = filePath;
+        if (!savedPath) {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (workspaceFolders && workspaceFolders.length > 0) {
+                // Create .levin/queries directory (with optional subfolder)
+                let levinDir = path.join(workspaceFolders[0].uri.fsPath, '.levin', 'queries');
+                if (folder) {
+                    levinDir = path.join(levinDir, folder);
+                }
+                if (!fs.existsSync(levinDir)) {
+                    fs.mkdirSync(levinDir, { recursive: true });
+                }
+
+                // Sanitize name for filename
+                const sanitizedName = name.replace(/[^a-z0-9_-]/gi, '_').toLowerCase();
+                savedPath = path.join(levinDir, `${sanitizedName}.dtlv.edn`);
+
+                // Write the file
+                fs.writeFileSync(savedPath, queryText, 'utf-8');
+            }
+        }
+
         if (existingIndex !== -1) {
             // Update existing
             this.savedQueries[existingIndex] = {
                 name,
                 query: queryText,
-                createdAt: Date.now()
+                createdAt: Date.now(),
+                filePath: savedPath,
+                folder
             };
         } else {
             // Add new
             this.savedQueries.push({
                 name,
                 query: queryText,
-                createdAt: Date.now()
+                createdAt: Date.now(),
+                filePath: savedPath,
+                folder
             });
         }
 
-        // Sort by name
-        this.savedQueries.sort((a, b) => a.name.localeCompare(b.name));
+        // Sort by folder, then name
+        this.savedQueries.sort((a, b) => {
+            const folderA = a.folder || '';
+            const folderB = b.folder || '';
+            if (folderA !== folderB) {
+                return folderA.localeCompare(folderB);
+            }
+            return a.name.localeCompare(b.name);
+        });
 
         this.saveQueries();
         this._onDidChangeTreeData.fire();
+
+        return savedPath;
     }
 
     async removeQuery(name: string): Promise<void> {
@@ -68,16 +114,70 @@ export class SavedQueriesProvider implements vscode.TreeDataProvider<SavedQueryI
         this._onDidChangeTreeData.fire();
     }
 
-    getTreeItem(element: SavedQueryItem): vscode.TreeItem {
+    getTreeItem(element: SavedQueryItem | FolderItem): vscode.TreeItem {
         return element;
     }
 
-    getChildren(element?: SavedQueryItem): SavedQueryItem[] {
+    getChildren(element?: SavedQueryItem | FolderItem): (SavedQueryItem | FolderItem)[] {
         if (element) {
+            // If element is a folder, return its queries
+            if (element instanceof FolderItem) {
+                return element.queries.map(query => new SavedQueryItem(query));
+            }
             return [];
         }
 
-        return this.savedQueries.map(query => new SavedQueryItem(query));
+        // Group queries by folder
+        const folderMap = new Map<string, SavedQuery[]>();
+        const unfoldered: SavedQuery[] = [];
+
+        for (const query of this.savedQueries) {
+            if (query.folder) {
+                if (!folderMap.has(query.folder)) {
+                    folderMap.set(query.folder, []);
+                }
+                folderMap.get(query.folder)!.push(query);
+            } else {
+                unfoldered.push(query);
+            }
+        }
+
+        const items: (SavedQueryItem | FolderItem)[] = [];
+
+        // Add folders
+        const sortedFolders = Array.from(folderMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+        for (const [folderName, queries] of sortedFolders) {
+            items.push(new FolderItem(folderName, queries));
+        }
+
+        // Add unfoldered queries
+        for (const query of unfoldered) {
+            items.push(new SavedQueryItem(query));
+        }
+
+        return items;
+    }
+
+    getFolders(): string[] {
+        const folders = new Set<string>();
+        for (const query of this.savedQueries) {
+            if (query.folder) {
+                folders.add(query.folder);
+            }
+        }
+        return Array.from(folders).sort();
+    }
+}
+
+export class FolderItem extends vscode.TreeItem {
+    constructor(
+        public readonly folderName: string,
+        public readonly queries: SavedQuery[]
+    ) {
+        super(folderName, vscode.TreeItemCollapsibleState.Collapsed);
+        this.iconPath = new vscode.ThemeIcon('folder');
+        this.contextValue = 'queryFolder';
+        this.description = `${queries.length} ${queries.length === 1 ? 'query' : 'queries'}`;
     }
 }
 
@@ -93,10 +193,11 @@ export class SavedQueryItem extends vscode.TreeItem {
         this.iconPath = new vscode.ThemeIcon('bookmark');
         this.contextValue = 'savedQuery';
 
+        // If query has a file path, open the file; otherwise open in editor
         this.command = {
-            command: 'levin.runSavedQuery',
-            title: 'Run Query',
-            arguments: [savedQuery.query]
+            command: savedQuery.filePath ? 'levin.openSavedQueryFile' : 'levin.openSavedQuery',
+            title: 'Open Query',
+            arguments: [this]
         };
     }
 }
