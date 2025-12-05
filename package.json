@@ -133,6 +133,43 @@
         "command": "levin.openKvStore",
         "title": "Open Key-Value Store",
         "icon": "$(key)"
+      },
+      {
+        "command": "levin.createDatabaseFolder",
+        "title": "Levin: Create Database Folder",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "levin.addDatabaseToFolder",
+        "title": "Add to Folder",
+        "icon": "$(folder)"
+      },
+      {
+        "command": "levin.removeDatabaseFromFolder",
+        "title": "Remove from Folder"
+      },
+      {
+        "command": "levin.moveFolderUp",
+        "title": "Move Folder Up",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "levin.moveFolderDown",
+        "title": "Move Folder Down",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "levin.deleteFolder",
+        "title": "Delete Folder",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "levin.exportFolders",
+        "title": "Levin: Export Database Folders"
+      },
+      {
+        "command": "levin.importFolders",
+        "title": "Levin: Import Database Folders"
       }
     ],
     "viewsContainers": {
@@ -164,6 +201,11 @@
       "view/title": [
         {
           "command": "levin.openDatabase",
+          "when": "view == levin.databases",
+          "group": "navigation"
+        },
+        {
+          "command": "levin.createDatabaseFolder",
           "when": "view == levin.databases",
           "group": "navigation"
         },
@@ -208,6 +250,31 @@
           "command": "levin.copyPath",
           "when": "viewItem == database",
           "group": "3_copy"
+        },
+        {
+          "command": "levin.addDatabaseToFolder",
+          "when": "viewItem == database",
+          "group": "4_folder"
+        },
+        {
+          "command": "levin.removeDatabaseFromFolder",
+          "when": "viewItem == database",
+          "group": "4_folder"
+        },
+        {
+          "command": "levin.moveFolderUp",
+          "when": "viewItem == db-folder",
+          "group": "inline"
+        },
+        {
+          "command": "levin.moveFolderDown",
+          "when": "viewItem == db-folder",
+          "group": "inline"
+        },
+        {
+          "command": "levin.deleteFolder",
+          "when": "viewItem == db-folder",
+          "group": "2_delete"
         },
         {
           "command": "levin.openSavedQuery",
