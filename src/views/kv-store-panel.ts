@@ -8,7 +8,10 @@ export class KvStorePanel {
     private kvData: Array<[unknown, unknown]> = [];
     private dbiList: string[] = [];
 
-    constructor(private _dtlvBridge: DtlvBridge) {}
+    constructor(
+        private _dtlvBridge: DtlvBridge,
+        private context?: vscode.ExtensionContext
+    ) {}
 
     async show(dbPath: string): Promise<void> {
         this.currentDbPath = dbPath;
@@ -34,16 +37,76 @@ export class KvStorePanel {
             );
         }
 
-        await this.loadDbiList();
-        this.updateContent();
+        // Show loading state
+        this.panel.webview.html = this.getLoadingHtml();
+
+        // Load DBI list with progress indicator
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Loading KV Store...',
+            cancellable: false
+        }, async () => {
+            try {
+                await this.loadDbiList();
+                this.updateContent();
+
+                // Add to recent databases
+                if (this.context) {
+                    this.addToRecentDatabases(dbPath);
+                }
+
+                if (this.dbiList.length === 0) {
+                    vscode.window.showInformationMessage(`KV Store opened: ${dbPath} (empty - create a new DBI to get started)`);
+                } else {
+                    vscode.window.showInformationMessage(`KV Store opened: ${dbPath} (${this.dbiList.length} DBIs found)`);
+                }
+            } catch (error) {
+                const errorMessage = String(error);
+
+                // Check if it's a "database doesn't exist" error
+                if (errorMessage.includes('No such file') || errorMessage.includes('does not exist') || errorMessage.includes('ENOENT')) {
+                    const action = await vscode.window.showWarningMessage(
+                        `Database does not exist at ${dbPath}. Would you like to create it?`,
+                        'Create Database',
+                        'Cancel'
+                    );
+
+                    if (action === 'Create Database') {
+                        try {
+                            // Initialize the KV store by creating a DBI
+                            await this._dtlvBridge.createKvDatabase(dbPath, 'default');
+                            await this.loadDbiList();
+                            this.updateContent();
+
+                            // Add to recent databases after successful creation
+                            if (this.context) {
+                                this.addToRecentDatabases(dbPath);
+                            }
+
+                            vscode.window.showInformationMessage(`Created KV Store at: ${dbPath}`);
+                        } catch (createError) {
+                            vscode.window.showErrorMessage(`Failed to create KV Store: ${createError}`);
+                            this.updateContent();
+                        }
+                    } else {
+                        this.updateContent();
+                    }
+                } else {
+                    vscode.window.showErrorMessage(`Failed to open KV Store: ${error}`);
+                    this.updateContent();
+                }
+            }
+        });
     }
 
     private async loadDbiList(): Promise<void> {
         try {
             this.dbiList = await this._dtlvBridge.listKvDatabases(this.currentDbPath);
+            console.log(`Loaded ${this.dbiList.length} DBIs:`, this.dbiList);
         } catch (error) {
-            vscode.window.showErrorMessage(`Failed to load DBI list: ${error}`);
+            console.error('Failed to load DBI list:', error);
             this.dbiList = [];
+            throw error; // Re-throw to be caught by the progress handler
         }
     }
 
@@ -81,6 +144,12 @@ export class KvStorePanel {
                 break;
             case 'editValue':
                 await this.editValue(message.key as string, message.value as string);
+                break;
+            case 'exportDbi':
+                await this.exportDbi();
+                break;
+            case 'importDbi':
+                await this.importDbi();
                 break;
         }
     }
@@ -133,11 +202,17 @@ export class KvStorePanel {
         if (!value) { return; }
 
         try {
-            await this._dtlvBridge.putKvValue(this.currentDbPath, this.currentDbi, key, value);
-            vscode.window.showInformationMessage('Key-value pair added');
+            console.log(`Adding key-value to ${this.currentDbi}: ${key} = ${value}`);
+            const result = await this._dtlvBridge.putKvValue(this.currentDbPath, this.currentDbi, key, value);
+            console.log('putKvValue result:', result);
+
             await this.loadKvData(this.currentDbi);
+            console.log('Loaded data after add:', this.kvData);
+
             this.updateContent();
+            vscode.window.showInformationMessage('Key-value pair added');
         } catch (error) {
+            console.error('Failed to add key-value:', error);
             vscode.window.showErrorMessage(`Failed to add key-value: ${error}`);
         }
     }
@@ -187,6 +262,51 @@ export class KvStorePanel {
     private updateContent(): void {
         if (!this.panel) { return; }
         this.panel.webview.html = this.getHtml();
+    }
+
+    private getLoadingHtml(): string {
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Key-Value Store</title>
+    <style>
+        body {
+            font-family: var(--vscode-font-family);
+            color: var(--vscode-foreground);
+            background-color: var(--vscode-editor-background);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .loading {
+            text-align: center;
+        }
+        .spinner {
+            border: 4px solid var(--vscode-panel-border);
+            border-top: 4px solid var(--vscode-button-background);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="loading">
+        <div class="spinner"></div>
+        <p>Loading KV Store...</p>
+    </div>
+</body>
+</html>`;
     }
 
     private getHtml(): string {
@@ -371,12 +491,17 @@ export class KvStorePanel {
     <div class="toolbar">
         <button onclick="createDbi()">New DBI</button>
         <button onclick="addKeyValue()" ${!this.currentDbi ? 'disabled' : ''}>Add Key-Value</button>
+        <button onclick="importDbi()" ${!this.currentDbi ? 'disabled' : ''}>Import</button>
+        <button onclick="exportDbi()" ${!this.currentDbi ? 'disabled' : ''}>Export</button>
         <button onclick="refresh()">Refresh</button>
+        <div style="flex: 1; text-align: right; padding-right: 8px; font-size: 12px; color: var(--vscode-descriptionForeground);">
+            Database: ${this.escapeHtml(this.currentDbPath)}
+        </div>
     </div>
     <div class="main-content">
         <div class="sidebar">
             <div class="sidebar-header">DBIs</div>
-            ${dbiListHtml || '<div class="empty-state">No DBIs found</div>'}
+            ${dbiListHtml || '<div class="empty-state">No DBIs found. Click "New DBI" to create one.</div>'}
         </div>
         <div class="content">
             ${this.currentDbi ? kvTableHtml : '<div class="no-dbi-selected">Select a DBI to view its contents</div>'}
@@ -409,6 +534,14 @@ export class KvStorePanel {
         function editValue(key, value) {
             vscode.postMessage({ command: 'editValue', key, value });
         }
+
+        function importDbi() {
+            vscode.postMessage({ command: 'importDbi' });
+        }
+
+        function exportDbi() {
+            vscode.postMessage({ command: 'exportDbi' });
+        }
     </script>
 </body>
 </html>`;
@@ -437,5 +570,164 @@ export class KvStorePanel {
             .replace(/"/g, '\\"')
             .replace(/\n/g, '\\n')
             .replace(/\r/g, '\\r');
+    }
+
+    private async exportDbi(): Promise<void> {
+        if (!this.currentDbi) {
+            vscode.window.showWarningMessage('Please select a DBI first');
+            return;
+        }
+
+        try {
+            const result = await this._dtlvBridge.exportKvDbi(this.currentDbPath, this.currentDbi);
+
+            if (!result.success || !result.data) {
+                vscode.window.showErrorMessage(`Failed to export DBI: ${result.error}`);
+                return;
+            }
+
+            // Convert result to EDN string
+            const ednContent = this.formatEdnOutput(result.data);
+
+            // Ask user where to save
+            const saveUri = await vscode.window.showSaveDialog({
+                filters: { 'EDN Files': ['edn'], 'All Files': ['*'] },
+                defaultUri: vscode.Uri.file(`${this.currentDbi}.edn`),
+                saveLabel: 'Export'
+            });
+
+            if (!saveUri) { return; }
+
+            // Write file
+            const buffer = Buffer.from(ednContent, 'utf-8');
+            await vscode.workspace.fs.writeFile(saveUri, buffer);
+
+            vscode.window.showInformationMessage(`Exported ${this.currentDbi} to ${saveUri.fsPath}`);
+        } catch (error) {
+            vscode.window.showErrorMessage(`Export failed: ${error}`);
+        }
+    }
+
+    private async importDbi(): Promise<void> {
+        if (!this.currentDbi) {
+            vscode.window.showWarningMessage('Please select a DBI first');
+            return;
+        }
+
+        // Ask user to select file
+        const files = await vscode.window.showOpenDialog({
+            canSelectFiles: true,
+            canSelectMany: false,
+            filters: { 'EDN Files': ['edn'], 'All Files': ['*'] },
+            title: 'Select EDN file to import'
+        });
+
+        if (!files || files.length === 0) { return; }
+
+        try {
+            // Read file content
+            const fileContent = await vscode.workspace.fs.readFile(files[0]);
+            const ednContent = Buffer.from(fileContent).toString('utf-8');
+
+            if (!ednContent || ednContent.trim().length === 0) {
+                vscode.window.showErrorMessage('File is empty');
+                return;
+            }
+
+            // Import with progress
+            await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: 'Importing key-values...',
+                cancellable: false
+            }, async () => {
+                const result = await this._dtlvBridge.importKvDbi(
+                    this.currentDbPath,
+                    this.currentDbi!,
+                    ednContent.trim()
+                );
+
+                if (result.success) {
+                    const count = (result.data as { count?: number })?.count || 0;
+                    vscode.window.showInformationMessage(`Imported ${count} key-value pairs`);
+                    await this.loadKvData(this.currentDbi!);
+                    this.updateContent();
+                } else {
+                    vscode.window.showErrorMessage(`Import failed: ${result.error}`);
+                }
+            });
+        } catch (error) {
+            vscode.window.showErrorMessage(`Import failed: ${error}`);
+        }
+    }
+
+    private formatEdnOutput(data: unknown): string {
+        if (typeof data === 'string') {
+            return data;
+        }
+
+        // Use stdout from the dtlv command which should already be in EDN format
+        // If data is already a properly formatted EDN string from the result, use it
+        return this.toEdnString(data, 0);
+    }
+
+    private toEdnString(value: unknown, indent: number = 0): string {
+        const spaces = '  '.repeat(indent);
+        const nextSpaces = '  '.repeat(indent + 1);
+
+        if (value === null || value === undefined) {
+            return 'nil';
+        }
+
+        if (typeof value === 'boolean') {
+            return value ? 'true' : 'false';
+        }
+
+        if (typeof value === 'number') {
+            return String(value);
+        }
+
+        if (typeof value === 'string') {
+            // Check if it looks like a keyword
+            if (value.startsWith(':')) {
+                return value;
+            }
+            return `"${value.replace(/"/g, '\\"')}"`;
+        }
+
+        if (Array.isArray(value)) {
+            if (value.length === 0) { return '[]'; }
+            const items = value.map(v => this.toEdnString(v, indent + 1));
+            return `[${items.join(' ')}]`;
+        }
+
+        if (typeof value === 'object') {
+            const entries = Object.entries(value);
+            if (entries.length === 0) { return '{}'; }
+
+            const pairs = entries.map(([k, v]) => {
+                const key = k.startsWith(':') ? k : `:${k}`;
+                return `${nextSpaces}${key} ${this.toEdnString(v, indent + 1)}`;
+            });
+
+            return `{\n${pairs.join('\n')}\n${spaces}}`;
+        }
+
+        return String(value);
+    }
+
+    private addToRecentDatabases(dbPath: string): void {
+        if (!this.context) { return; }
+
+        const config = vscode.workspace.getConfiguration('levin');
+        const recent = config.get<string[]>('recentDatabases', []);
+
+        // Remove if exists, then add to front
+        const filtered = recent.filter(p => p !== dbPath);
+        filtered.unshift(dbPath);
+
+        // Keep only last 10
+        const updated = filtered.slice(0, 10);
+
+        config.update('recentDatabases', updated, vscode.ConfigurationTarget.Global);
     }
 }

@@ -2,7 +2,7 @@
   "name": "levin",
   "displayName": "Levin",
   "description": "Browse, query, and manage Datalevin databases in VS Code",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "KayBosompem",
   "author": {
     "name": "Kay Bosompem"
@@ -128,6 +128,11 @@
         "command": "levin.showKvStore",
         "title": "Levin: Open Key-Value Store",
         "icon": "$(database)"
+      },
+      {
+        "command": "levin.openKvStore",
+        "title": "Open Key-Value Store",
+        "icon": "$(key)"
       }
     ],
     "viewsContainers": {

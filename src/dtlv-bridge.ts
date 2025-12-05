@@ -679,7 +679,13 @@ export class DtlvBridge {
             proc.on('close', (code) => {
                 if (code === 0) {
                     try {
-                        const parsed = parseEdn(stdout.trim());
+                        // dtlv sometimes prints intermediate nil values
+                        // We want the LAST value in the output
+                        const trimmed = stdout.trim();
+                        const lines = trimmed.split('\n').filter(l => l.trim().length > 0);
+                        const lastLine = lines.length > 0 ? lines[lines.length - 1] : trimmed;
+
+                        const parsed = parseEdn(lastLine);
                         resolve({
                             success: true,
                             data: parsed,
@@ -937,6 +943,7 @@ export class DtlvBridge {
 
     /**
      * List all DBIs (sub-databases) in a KV database
+     * Filters out system DBIs (datalevin/*)
      */
     async listKvDatabases(dbPath: string): Promise<string[]> {
         const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
@@ -961,7 +968,12 @@ export class DtlvBridge {
                     try {
                         // Output is a Clojure set like: #{"dbi1" "dbi2"}
                         const parsed = parseEdn(stdout.trim()) as string[];
-                        resolve(Array.isArray(parsed) ? parsed : []);
+                        const allDbis = Array.isArray(parsed) ? parsed : [];
+
+                        // Filter out system DBIs (datalevin/* are internal)
+                        const userDbis = allDbis.filter(dbi => !dbi.startsWith('datalevin/'));
+
+                        resolve(userDbis);
                     } catch (error) {
                         reject(new Error(`Failed to parse DBI list: ${error}`));
                     }
@@ -984,11 +996,15 @@ export class DtlvBridge {
 
         const code = `
             (require '[datalevin.core :as d])
-            (def db (d/open-kv "${this.escapeString(resolvedPath)}"))
-            (d/open-dbi db "${this.escapeString(dbiName)}")
-            (def result (d/get-range db "${this.escapeString(dbiName)}" [:all]))
-            (d/close-kv db)
-            result
+            (let [db (d/open-kv "${this.escapeString(resolvedPath)}")]
+              (d/open-dbi db "${this.escapeString(dbiName)}")
+              (try
+                (let [result (d/get-range db "${this.escapeString(dbiName)}" [:all])]
+                  (d/close-kv db)
+                  result)
+                (catch Exception e
+                  (d/close-kv db)
+                  [])))
         `.trim();
 
         const result = await this.execDtlv(code);
@@ -1008,11 +1024,11 @@ export class DtlvBridge {
 
         const code = `
             (require '[datalevin.core :as d])
-            (def db (d/open-kv "${this.escapeString(resolvedPath)}"))
-            (d/open-dbi db "${this.escapeString(dbiName)}")
-            (def result (d/get-value db "${this.escapeString(dbiName)}" ${key}))
-            (d/close-kv db)
-            result
+            (let [db (d/open-kv "${this.escapeString(resolvedPath)}")]
+              (d/open-dbi db "${this.escapeString(dbiName)}")
+              (let [result (d/get-value db "${this.escapeString(dbiName)}" ${key})]
+                (d/close-kv db)
+                result))
         `.trim();
 
         return this.execDtlv(code);
@@ -1026,11 +1042,11 @@ export class DtlvBridge {
 
         const code = `
             (require '[datalevin.core :as d])
-            (def db (d/open-kv "${this.escapeString(resolvedPath)}"))
-            (d/open-dbi db "${this.escapeString(dbiName)}")
-            (d/transact-kv db [[:put "${this.escapeString(dbiName)}" ${key} ${value}]])
-            (d/close-kv db)
-            {:success true}
+            (let [db (d/open-kv "${this.escapeString(resolvedPath)}")]
+              (d/open-dbi db "${this.escapeString(dbiName)}")
+              (d/transact-kv db [[:put "${this.escapeString(dbiName)}" ${key} ${value}]])
+              (d/close-kv db)
+              {:success true})
         `.trim();
 
         return this.execDtlv(code);
@@ -1044,11 +1060,11 @@ export class DtlvBridge {
 
         const code = `
             (require '[datalevin.core :as d])
-            (def db (d/open-kv "${this.escapeString(resolvedPath)}"))
-            (d/open-dbi db "${this.escapeString(dbiName)}")
-            (d/transact-kv db [[:del "${this.escapeString(dbiName)}" ${key}]])
-            (d/close-kv db)
-            {:success true}
+            (let [db (d/open-kv "${this.escapeString(resolvedPath)}")]
+              (d/open-dbi db "${this.escapeString(dbiName)}")
+              (d/transact-kv db [[:del "${this.escapeString(dbiName)}" ${key}]])
+              (d/close-kv db)
+              {:success true})
         `.trim();
 
         return this.execDtlv(code);
@@ -1062,10 +1078,51 @@ export class DtlvBridge {
 
         const code = `
             (require '[datalevin.core :as d])
-            (def db (d/open-kv "${this.escapeString(resolvedPath)}"))
-            (d/open-dbi db "${this.escapeString(dbiName)}")
-            (d/close-kv db)
-            {:success true :dbi "${this.escapeString(dbiName)}"}
+            (let [db (d/open-kv "${this.escapeString(resolvedPath)}")]
+              (d/open-dbi db "${this.escapeString(dbiName)}")
+              (d/close-kv db)
+              {:success true :dbi "${this.escapeString(dbiName)}"})
+        `.trim();
+
+        return this.execDtlv(code);
+    }
+
+    /**
+     * Export all key-value pairs from a DBI as an EDN map
+     */
+    async exportKvDbi(dbPath: string, dbiName: string): Promise<QueryResult> {
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
+
+        const code = `
+            (require '[datalevin.core :as d])
+            (let [db (d/open-kv "${this.escapeString(resolvedPath)}")]
+              (d/open-dbi db "${this.escapeString(dbiName)}")
+              (let [pairs (d/get-range db "${this.escapeString(dbiName)}" [:all])
+                    result (into {} pairs)]
+                (d/close-kv db)
+                result))
+        `.trim();
+
+        return this.execDtlv(code);
+    }
+
+    /**
+     * Import key-value pairs from an EDN map into a DBI
+     * The EDN should be a map like: {:key1 "value1" :key2 {:nested "value"}}
+     */
+    async importKvDbi(dbPath: string, dbiName: string, ednMap: string): Promise<QueryResult> {
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
+
+        const code = `
+            (require '[datalevin.core :as d])
+            (require '[clojure.edn :as edn])
+            (let [db (d/open-kv "${this.escapeString(resolvedPath)}")
+                  data (edn/read-string "${this.escapeString(ednMap)}")]
+              (d/open-dbi db "${this.escapeString(dbiName)}")
+              (let [txs (mapv (fn [[k v]] [:put "${this.escapeString(dbiName)}" k v]) data)]
+                (d/transact-kv db txs)
+                (d/close-kv db)
+                {:success true :count (count txs)}))
         `.trim();
 
         return this.execDtlv(code);
