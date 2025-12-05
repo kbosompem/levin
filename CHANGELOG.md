@@ -5,6 +5,55 @@ All notable changes to the Levin extension will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2024-12-05
+
+### Added
+
+- **Database Folders** - Organize databases with color-coded folders
+  - Create folders with 8 color options (red, orange, yellow, green, blue, purple, pink, default)
+  - Add/remove databases to/from folders
+  - Reorder folders with move up/down commands
+  - Export/import folder configurations as JSON
+  - Persistent storage in extension global state
+  - Commands: `createDatabaseFolder`, `addDatabaseToFolder`, `removeDatabaseFromFolder`, `moveFolderUp`, `moveFolderDown`, `deleteFolder`, `exportFolders`, `importFolders`
+
+- **Query Node** - Quick access to query editor from database tree
+  - New "Query" node under each database
+  - Opens new query tab or activates existing unsaved query for that database
+  - Smart document detection to find existing queries
+
+- **Saved Query Folders** - Organize saved queries into folders
+  - Create folders when saving queries
+  - Queries saved as actual `.dtlv.edn` files in `.levin/queries/` directory
+  - Folder structure: `.levin/queries/folder-name/query.dtlv.edn`
+  - Tree view shows folders with query counts
+
+- **Schema Import** - Import schema from EDN files
+  - "Import Schema from File" button in schema editor
+  - Opens file picker to select EDN schema files
+  - Imports using Datomic schema format
+  - Progress indicators and error handling
+
+### Changed
+
+- **Saved Query Behavior** - Queries now save as actual files
+  - After saving, unsaved editor closes and saved file opens
+  - No more "unsaved edit" confusion
+  - Clicking saved query opens the actual file
+
+- **Tab Activation** - All panels now activate existing tabs instead of creating duplicates
+  - Works for Schema, Entities, Relationships, Rules, and KV Store panels
+  - Uses `panel.reveal()` for better UX
+
+### Fixed
+
+- **KV Store Improvements**
+  - Filter out system DBIs (datalevin/*) from KV database list
+  - Improved error handling with try-catch blocks
+  - Better output parsing to handle intermediate nil values
+
+---
+
 ## [0.5.0] - 2024-12-04
 
 ### Added
