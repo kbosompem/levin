@@ -48,7 +48,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
 
     // Initialize tree providers
-    databaseTreeProvider = new DatabaseTreeProvider(dtlvBridge);
+    databaseTreeProvider = new DatabaseTreeProvider(dtlvBridge, context);
     queryHistoryProvider = new QueryHistoryProvider(context);
     savedQueriesProvider = new SavedQueriesProvider(context);
 
@@ -687,6 +687,160 @@ function registerCommands(context: vscode.ExtensionContext): void {
                     vscode.window.showErrorMessage(`Import failed: ${result.error}`);
                 }
             });
+        })
+    );
+
+    // Create Database Folder command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.createDatabaseFolder', async () => {
+            const name = await vscode.window.showInputBox({
+                prompt: 'Enter folder name',
+                placeHolder: 'My Databases'
+            });
+            if (!name) { return; }
+
+            const colors = [
+                { label: '🔴 Red', value: 'charts.red' },
+                { label: '🟠 Orange', value: 'charts.orange' },
+                { label: '🟡 Yellow', value: 'charts.yellow' },
+                { label: '🟢 Green', value: 'charts.green' },
+                { label: '🔵 Blue', value: 'charts.blue' },
+                { label: '🟣 Purple', value: 'charts.purple' },
+                { label: '🟤 Pink', value: 'charts.pink' },
+                { label: '⚪ Default', value: '' }
+            ];
+
+            const selectedColor = await vscode.window.showQuickPick(colors, {
+                placeHolder: 'Select a color for the folder'
+            });
+
+            const color = selectedColor?.value || '';
+            databaseTreeProvider.addFolder(name, color);
+            vscode.window.showInformationMessage(`Created folder "${name}"`);
+        })
+    );
+
+    // Add Database to Folder command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.addDatabaseToFolder', async (item?: DatabaseTreeItem) => {
+            const dbPath = extractDbPath(item) || await selectDatabase();
+            if (!dbPath) { return; }
+
+            const folders = databaseTreeProvider.getFolders();
+            if (folders.length === 0) {
+                const createNew = await vscode.window.showInformationMessage(
+                    'No folders exist. Create one?',
+                    'Create Folder'
+                );
+                if (createNew) {
+                    vscode.commands.executeCommand('levin.createDatabaseFolder');
+                }
+                return;
+            }
+
+            const folderItems = folders.map(f => ({ label: f.name, folder: f }));
+            const selected = await vscode.window.showQuickPick(folderItems, {
+                placeHolder: 'Select folder'
+            });
+
+            if (selected) {
+                databaseTreeProvider.addDatabaseToFolder(selected.folder.name, dbPath);
+                vscode.window.showInformationMessage(`Added database to folder "${selected.folder.name}"`);
+            }
+        })
+    );
+
+    // Remove Database from Folder command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.removeDatabaseFromFolder', async (item?: DatabaseTreeItem) => {
+            const dbPath = extractDbPath(item);
+            if (!dbPath) { return; }
+
+            const folders = databaseTreeProvider.getFolders();
+            const folderWithDb = folders.find(f => f.databases.includes(dbPath));
+
+            if (folderWithDb) {
+                databaseTreeProvider.removeDatabaseFromFolder(folderWithDb.name, dbPath);
+                vscode.window.showInformationMessage(`Removed database from folder "${folderWithDb.name}"`);
+            }
+        })
+    );
+
+    // Move Folder Up command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.moveFolderUp', async (item?: DatabaseTreeItem) => {
+            if (item?.itemType === 'db-folder' && item.label) {
+                databaseTreeProvider.moveFolderUp(item.label);
+            }
+        })
+    );
+
+    // Move Folder Down command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.moveFolderDown', async (item?: DatabaseTreeItem) => {
+            if (item?.itemType === 'db-folder' && item.label) {
+                databaseTreeProvider.moveFolderDown(item.label);
+            }
+        })
+    );
+
+    // Delete Folder command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.deleteFolder', async (item?: DatabaseTreeItem) => {
+            if (item?.itemType === 'db-folder' && item.label) {
+                const confirm = await vscode.window.showWarningMessage(
+                    `Delete folder "${item.label}"? Databases will not be deleted.`,
+                    'Delete', 'Cancel'
+                );
+                if (confirm === 'Delete') {
+                    databaseTreeProvider.removeFolder(item.label);
+                    vscode.window.showInformationMessage(`Deleted folder "${item.label}"`);
+                }
+            }
+        })
+    );
+
+    // Export Folders command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.exportFolders', async () => {
+            const json = databaseTreeProvider.exportFolders();
+            const uri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file('database-folders.json'),
+                filters: {
+                    'JSON Files': ['json'],
+                    'All Files': ['*']
+                }
+            });
+
+            if (uri) {
+                await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
+                vscode.window.showInformationMessage('Folders exported successfully');
+            }
+        })
+    );
+
+    // Import Folders command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.importFolders', async () => {
+            const uris = await vscode.window.showOpenDialog({
+                canSelectFiles: true,
+                canSelectMany: false,
+                filters: {
+                    'JSON Files': ['json'],
+                    'All Files': ['*']
+                }
+            });
+
+            if (uris && uris.length > 0) {
+                try {
+                    const fileContent = await vscode.workspace.fs.readFile(uris[0]);
+                    const json = Buffer.from(fileContent).toString('utf-8');
+                    databaseTreeProvider.importFolders(json);
+                    vscode.window.showInformationMessage('Folders imported successfully');
+                } catch (error) {
+                    vscode.window.showErrorMessage(`Failed to import folders: ${error}`);
+                }
+            }
         })
     );
 }

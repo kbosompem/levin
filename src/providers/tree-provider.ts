@@ -1,7 +1,14 @@
 import * as vscode from 'vscode';
 import { DtlvBridge, SchemaAttribute } from '../dtlv-bridge';
 
-export type TreeItemType = 'database' | 'schema-folder' | 'schema-item' | 'entities-folder' | 'entity-namespace' | 'relationships-folder' | 'rules-folder' | 'kv-store-folder' | 'queries-folder' | 'query-node' | 'open-database';
+export type TreeItemType = 'database' | 'db-folder' | 'schema-folder' | 'schema-item' | 'entities-folder' | 'entity-namespace' | 'relationships-folder' | 'rules-folder' | 'kv-store-folder' | 'queries-folder' | 'query-node' | 'open-database';
+
+export interface DatabaseFolder {
+    name: string;
+    color: string; // ThemeIcon color like 'charts.red', 'charts.blue', etc.
+    databases: string[]; // Array of database paths
+    order?: number; // For custom ordering
+}
 
 export class DatabaseTreeItem extends vscode.TreeItem {
     constructor(
@@ -9,14 +16,17 @@ export class DatabaseTreeItem extends vscode.TreeItem {
         public readonly collapsibleState: vscode.TreeItemCollapsibleState,
         public readonly itemType: TreeItemType,
         public readonly dbPath?: string,
-        public readonly data?: SchemaAttribute | { namespace: string; count: number },
-        public readonly isRemote?: boolean
+        public readonly data?: SchemaAttribute | { namespace: string; count: number } | DatabaseFolder,
+        public readonly isRemote?: boolean,
+        public readonly folderColor?: string
     ) {
         super(label, collapsibleState);
         this.contextValue = itemType;
         // Set id to include dbPath - this is reliably preserved by VS Code
         if (dbPath) {
             this.id = `${itemType}:${dbPath}`;
+        } else if (itemType === 'db-folder') {
+            this.id = `${itemType}:${label}`;
         }
         this.setIcon();
         this.setTooltip();
@@ -26,6 +36,9 @@ export class DatabaseTreeItem extends vscode.TreeItem {
         switch (this.itemType) {
             case 'database':
                 this.iconPath = new vscode.ThemeIcon(this.isRemote ? 'remote' : 'database');
+                break;
+            case 'db-folder':
+                this.iconPath = new vscode.ThemeIcon('folder', this.folderColor ? new vscode.ThemeColor(this.folderColor) : undefined);
                 break;
             case 'schema-folder':
                 this.iconPath = new vscode.ThemeIcon('symbol-structure');
@@ -89,7 +102,101 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     // Store tree items by ID for reliable lookup
     private treeItemsById: Map<string, DatabaseTreeItem> = new Map();
 
-    constructor(private dtlvBridge: DtlvBridge) {}
+    // Database folders
+    private folders: DatabaseFolder[] = [];
+    private readonly foldersStorageKey = 'levin.databaseFolders';
+
+    constructor(
+        private dtlvBridge: DtlvBridge,
+        private context?: vscode.ExtensionContext
+    ) {
+        this.loadFolders();
+    }
+
+    private loadFolders(): void {
+        if (this.context) {
+            const stored = this.context.globalState.get<DatabaseFolder[]>(this.foldersStorageKey);
+            if (stored) {
+                this.folders = stored;
+            }
+        }
+    }
+
+    private saveFolders(): void {
+        if (this.context) {
+            this.context.globalState.update(this.foldersStorageKey, this.folders);
+        }
+    }
+
+    addFolder(name: string, color: string): void {
+        const order = this.folders.length;
+        this.folders.push({ name, color, databases: [], order });
+        this.saveFolders();
+        this.refresh();
+    }
+
+    removeFolder(name: string): void {
+        this.folders = this.folders.filter(f => f.name !== name);
+        this.saveFolders();
+        this.refresh();
+    }
+
+    addDatabaseToFolder(folderName: string, dbPath: string): void {
+        const folder = this.folders.find(f => f.name === folderName);
+        if (folder && !folder.databases.includes(dbPath)) {
+            folder.databases.push(dbPath);
+            this.saveFolders();
+            this.refresh();
+        }
+    }
+
+    removeDatabaseFromFolder(folderName: string, dbPath: string): void {
+        const folder = this.folders.find(f => f.name === folderName);
+        if (folder) {
+            folder.databases = folder.databases.filter(p => p !== dbPath);
+            this.saveFolders();
+            this.refresh();
+        }
+    }
+
+    moveFolderUp(folderName: string): void {
+        const index = this.folders.findIndex(f => f.name === folderName);
+        if (index > 0) {
+            [this.folders[index - 1], this.folders[index]] = [this.folders[index], this.folders[index - 1]];
+            this.folders.forEach((f, i) => f.order = i);
+            this.saveFolders();
+            this.refresh();
+        }
+    }
+
+    moveFolderDown(folderName: string): void {
+        const index = this.folders.findIndex(f => f.name === folderName);
+        if (index >= 0 && index < this.folders.length - 1) {
+            [this.folders[index], this.folders[index + 1]] = [this.folders[index + 1], this.folders[index]];
+            this.folders.forEach((f, i) => f.order = i);
+            this.saveFolders();
+            this.refresh();
+        }
+    }
+
+    exportFolders(): string {
+        return JSON.stringify(this.folders, null, 2);
+    }
+
+    importFolders(json: string): void {
+        try {
+            const imported = JSON.parse(json) as DatabaseFolder[];
+            this.folders = imported;
+            this.saveFolders();
+            this.refresh();
+        } catch (error) {
+            throw new Error(`Invalid folder data: ${error}`);
+        }
+    }
+
+    getFolders(): DatabaseFolder[] {
+        return this.folders;
+    }
 
     refresh(): void {
         this.schemaCache.clear();
@@ -126,6 +233,10 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         switch (itemType) {
             case 'database':
                 return this.getDatabaseChildren(dbPath);
+            case 'db-folder':
+                // Return databases in this folder
+                const folderData = element.data as DatabaseFolder;
+                return this.getDatabasesInFolder(folderData);
             case 'schema-folder':
                 return this.getSchemaItems(dbPath);
             case 'entities-folder':
@@ -136,6 +247,24 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
                 console.log('No match for itemType:', itemType);
                 return [];
         }
+    }
+
+    private getDatabasesInFolder(folder: DatabaseFolder): DatabaseTreeItem[] {
+        const databases = this.dtlvBridge.getOpenDatabases();
+        return folder.databases
+            .filter(dbPath => databases.some(db => db.path === dbPath))
+            .map(dbPath => {
+                const db = databases.find(d => d.path === dbPath)!;
+                const item = new DatabaseTreeItem(
+                    db.name,
+                    vscode.TreeItemCollapsibleState.Collapsed,
+                    'database',
+                    db.path,
+                    undefined,
+                    db.isRemote
+                );
+                return this.registerItem(item);
+            });
     }
 
     private extractDbPathFromId(id?: string): string | undefined {
@@ -173,16 +302,40 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
 
         const databases = this.dtlvBridge.getOpenDatabases();
 
-        for (const db of databases) {
+        // Sort folders by order
+        const sortedFolders = [...this.folders].sort((a, b) => (a.order || 0) - (b.order || 0));
+
+        // Track which databases are in folders
+        const databasesInFolders = new Set<string>();
+
+        // Add folders
+        for (const folder of sortedFolders) {
             const item = new DatabaseTreeItem(
-                db.name,
+                folder.name,
                 vscode.TreeItemCollapsibleState.Collapsed,
-                'database',
-                db.path,
+                'db-folder',
                 undefined,
-                db.isRemote
+                folder,
+                undefined,
+                folder.color
             );
             items.push(this.registerItem(item));
+            folder.databases.forEach(db => databasesInFolders.add(db));
+        }
+
+        // Add databases not in folders
+        for (const db of databases) {
+            if (!databasesInFolders.has(db.path)) {
+                const item = new DatabaseTreeItem(
+                    db.name,
+                    vscode.TreeItemCollapsibleState.Collapsed,
+                    'database',
+                    db.path,
+                    undefined,
+                    db.isRemote
+                );
+                items.push(this.registerItem(item));
+            }
         }
 
         // Add "Open Database" item
