@@ -932,4 +932,142 @@ export class DtlvBridge {
 
         return this.runCode(dbPath, code);
     }
+
+    // ==================== KEY-VALUE STORE OPERATIONS ====================
+
+    /**
+     * List all DBIs (sub-databases) in a KV database
+     */
+    async listKvDatabases(dbPath: string): Promise<string[]> {
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
+
+        return new Promise((resolve, reject) => {
+            let stdout = '';
+            let stderr = '';
+
+            const args = ['-d', resolvedPath, '-l', 'dump'];
+            const proc = spawn(this.dtlvPath, args, { shell: true });
+
+            proc.stdout.on('data', (data) => {
+                stdout += data.toString();
+            });
+
+            proc.stderr.on('data', (data) => {
+                stderr += data.toString();
+            });
+
+            proc.on('close', (code) => {
+                if (code === 0) {
+                    try {
+                        // Output is a Clojure set like: #{"dbi1" "dbi2"}
+                        const parsed = parseEdn(stdout.trim()) as string[];
+                        resolve(Array.isArray(parsed) ? parsed : []);
+                    } catch (error) {
+                        reject(new Error(`Failed to parse DBI list: ${error}`));
+                    }
+                } else {
+                    reject(new Error(stderr || stdout || `Exit code: ${code}`));
+                }
+            });
+
+            proc.on('error', (error) => {
+                reject(error);
+            });
+        });
+    }
+
+    /**
+     * Get all key-value pairs from a DBI
+     */
+    async getKvRange(dbPath: string, dbiName: string): Promise<Array<[unknown, unknown]>> {
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
+
+        const code = `
+            (require '[datalevin.core :as d])
+            (def db (d/open-kv "${this.escapeString(resolvedPath)}"))
+            (d/open-dbi db "${this.escapeString(dbiName)}")
+            (def result (d/get-range db "${this.escapeString(dbiName)}" [:all]))
+            (d/close-kv db)
+            result
+        `.trim();
+
+        const result = await this.execDtlv(code);
+
+        if (result.success && result.data) {
+            return result.data as Array<[unknown, unknown]>;
+        }
+
+        return [];
+    }
+
+    /**
+     * Get a single value from a KV store
+     */
+    async getKvValue(dbPath: string, dbiName: string, key: string): Promise<QueryResult> {
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
+
+        const code = `
+            (require '[datalevin.core :as d])
+            (def db (d/open-kv "${this.escapeString(resolvedPath)}"))
+            (d/open-dbi db "${this.escapeString(dbiName)}")
+            (def result (d/get-value db "${this.escapeString(dbiName)}" ${key}))
+            (d/close-kv db)
+            result
+        `.trim();
+
+        return this.execDtlv(code);
+    }
+
+    /**
+     * Put a key-value pair into a DBI
+     */
+    async putKvValue(dbPath: string, dbiName: string, key: string, value: string): Promise<QueryResult> {
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
+
+        const code = `
+            (require '[datalevin.core :as d])
+            (def db (d/open-kv "${this.escapeString(resolvedPath)}"))
+            (d/open-dbi db "${this.escapeString(dbiName)}")
+            (d/transact-kv db [[:put "${this.escapeString(dbiName)}" ${key} ${value}]])
+            (d/close-kv db)
+            {:success true}
+        `.trim();
+
+        return this.execDtlv(code);
+    }
+
+    /**
+     * Delete a key from a DBI
+     */
+    async deleteKvKey(dbPath: string, dbiName: string, key: string): Promise<QueryResult> {
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
+
+        const code = `
+            (require '[datalevin.core :as d])
+            (def db (d/open-kv "${this.escapeString(resolvedPath)}"))
+            (d/open-dbi db "${this.escapeString(dbiName)}")
+            (d/transact-kv db [[:del "${this.escapeString(dbiName)}" ${key}]])
+            (d/close-kv db)
+            {:success true}
+        `.trim();
+
+        return this.execDtlv(code);
+    }
+
+    /**
+     * Create a new DBI (sub-database) in the KV store
+     */
+    async createKvDatabase(dbPath: string, dbiName: string): Promise<QueryResult> {
+        const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
+
+        const code = `
+            (require '[datalevin.core :as d])
+            (def db (d/open-kv "${this.escapeString(resolvedPath)}"))
+            (d/open-dbi db "${this.escapeString(dbiName)}")
+            (d/close-kv db)
+            {:success true :dbi "${this.escapeString(dbiName)}"}
+        `.trim();
+
+        return this.execDtlv(code);
+    }
 }

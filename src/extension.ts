@@ -12,6 +12,7 @@ import { EntityBrowser } from './views/entity-browser';
 import { RelationshipsPanel } from './views/relationships-panel';
 import { RulesPanel } from './views/rules-panel';
 import { ErrorPanel } from './views/error-panel';
+import { KvStorePanel } from './views/kv-store-panel';
 import { QueryHistoryProvider } from './providers/query-history-provider';
 import { SavedQueriesProvider } from './providers/saved-queries-provider';
 
@@ -27,6 +28,7 @@ let entityBrowser: EntityBrowser | undefined;
 let relationshipsPanel: RelationshipsPanel | undefined;
 let rulesPanel: RulesPanel | undefined;
 let errorPanel: ErrorPanel | undefined;
+let kvStorePanel: KvStorePanel | undefined;
 let outputChannel: vscode.OutputChannel;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -348,6 +350,16 @@ function registerCommands(context: vscode.ExtensionContext): void {
             const dbPath = extractDbPath(item) || await selectDatabase();
             if (dbPath) {
                 await showTransactionPanel(context, dbPath);
+            }
+        })
+    );
+
+    // Show KV Store command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.showKvStore', async (item?: DatabaseTreeItem) => {
+            const dbPath = extractDbPath(item) || await selectDatabase();
+            if (dbPath) {
+                await showKvStore(context, dbPath);
             }
         })
     );
@@ -821,6 +833,16 @@ async function showRulesPanel(
         rulesPanel = new RulesPanel(context, dtlvBridge);
     }
     await rulesPanel.show(dbPath);
+}
+
+async function showKvStore(
+    context: vscode.ExtensionContext,
+    dbPath: string
+): Promise<void> {
+    if (!kvStorePanel) {
+        kvStorePanel = new KvStorePanel(dtlvBridge);
+    }
+    await kvStorePanel.show(dbPath);
 }
 
 export function deactivate(): void {

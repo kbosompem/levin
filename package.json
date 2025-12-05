@@ -123,6 +123,11 @@
         "command": "levin.showOutput",
         "title": "Levin: Show Output",
         "icon": "$(output)"
+      },
+      {
+        "command": "levin.showKvStore",
+        "title": "Levin: Open Key-Value Store",
+        "icon": "$(database)"
       }
     ],
     "viewsContainers": {

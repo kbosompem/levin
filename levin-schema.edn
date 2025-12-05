@@ -1,0 +1,117 @@
+{
+ :decision/affects {:db/valueType :db.type/ref
+                :db/cardinality :db.cardinality/many :db.install/_attribute :db.part/db}
+ :decision/confidence {:db/valueType :db.type/long
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :decision/constraint {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :decision/constraint-valid? {:db/valueType :db.type/boolean
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :decision/created {:db/valueType :db.type/instant
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :decision/description {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :decision/domain {:db/valueType :db.type/keyword
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :decision/id {:db/valueType :db.type/uuid
+                :db/cardinality :db.cardinality/one
+                :db/unique :db.unique/identity :db.install/_attribute :db.part/db}
+ :decision/reason {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :file/confidence {:db/valueType :db.type/long
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :file/last-modified {:db/valueType :db.type/instant
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :file/module {:db/valueType :db.type/keyword
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :file/owner {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :file/path {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one
+                :db/unique :db.unique/identity :db.install/_attribute :db.part/db}
+ :intent/actual-files {:db/valueType :db.type/ref
+                :db/cardinality :db.cardinality/many :db.install/_attribute :db.part/db}
+ :intent/created {:db/valueType :db.type/instant
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :intent/description {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :intent/expected-files {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/many :db.install/_attribute :db.part/db}
+ :intent/id {:db/valueType :db.type/uuid
+                :db/cardinality :db.cardinality/one
+                :db/unique :db.unique/identity :db.install/_attribute :db.part/db}
+ :intent/module {:db/valueType :db.type/keyword
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :intent/status {:db/valueType :db.type/keyword
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :issue/assignee {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :issue/blocked-by {:db/valueType :db.type/ref
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :issue/body {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :issue/created {:db/valueType :db.type/instant
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :issue/github-id {:db/valueType :db.type/long
+                :db/cardinality :db.cardinality/one
+                :db/unique :db.unique/identity :db.install/_attribute :db.part/db}
+ :issue/github-url {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :issue/id {:db/valueType :db.type/uuid
+                :db/cardinality :db.cardinality/one
+                :db/unique :db.unique/identity :db.install/_attribute :db.part/db}
+ :issue/implements {:db/valueType :db.type/ref
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :issue/labels {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/many :db.install/_attribute :db.part/db}
+ :issue/relates-to {:db/valueType :db.type/ref
+                :db/cardinality :db.cardinality/many :db.install/_attribute :db.part/db}
+ :issue/repo {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :issue/state {:db/valueType :db.type/keyword
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :issue/synced-at {:db/valueType :db.type/instant
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :issue/title {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :issue/updated {:db/valueType :db.type/instant
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :rejected/created {:db/valueType :db.type/instant
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :rejected/id {:db/valueType :db.type/uuid
+                :db/cardinality :db.cardinality/one
+                :db/unique :db.unique/identity :db.install/_attribute :db.part/db}
+ :rejected/option {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :rejected/problem {:db/valueType :db.type/keyword
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :rejected/reason {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :rejected/revisit-if {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :task/affects {:db/valueType :db.type/ref
+                :db/cardinality :db.cardinality/many :db.install/_attribute :db.part/db}
+ :task/blocked-by {:db/valueType :db.type/ref
+                :db/cardinality :db.cardinality/many :db.install/_attribute :db.part/db}
+ :task/confidence {:db/valueType :db.type/long
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :task/context {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :task/created {:db/valueType :db.type/instant
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :task/depends-on {:db/valueType :db.type/ref
+                :db/cardinality :db.cardinality/many :db.install/_attribute :db.part/db}
+ :task/description {:db/valueType :db.type/string
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :task/github-issue {:db/valueType :db.type/ref
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :task/id {:db/valueType :db.type/uuid
+                :db/cardinality :db.cardinality/one
+                :db/unique :db.unique/identity :db.install/_attribute :db.part/db}
+ :task/implements {:db/valueType :db.type/ref
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :task/status {:db/valueType :db.type/keyword
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+ :task/updated {:db/valueType :db.type/instant
+                :db/cardinality :db.cardinality/one :db.install/_attribute :db.part/db}
+}
