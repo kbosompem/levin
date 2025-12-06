@@ -357,11 +357,7 @@
     },
     "configurationDefaults": {
       "[datalevin-query]": {
-        "editor.formatOnSave": false,
-        "editor.defaultFormatter": "betterthantomorrow.calva"
-      },
-      "files.associations": {
-        "*.dtlv.edn": "clojure"
+        "editor.formatOnSave": false
       }
     }
   },

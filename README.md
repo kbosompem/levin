@@ -135,23 +135,37 @@ Create `.dtlv.edn` files for your queries:
 
 ### Formatting .dtlv.edn Files
 
-The extension automatically associates `.dtlv.edn` files with Clojure for formatting. If you have Calva installed, you can:
+To use Clojure formatters (like Calva) on `.dtlv.edn` files:
 
-1. **Format on Save**: Add to your `settings.json`:
-   ```json
-   {
-     "[clojure]": {
-       "editor.formatOnSave": true,
-       "editor.defaultFormatter": "betterthantomorrow.calva"
-     }
-   }
-   ```
+**Option 1: Temporary (per file)**
+1. Click the language mode in the bottom-right corner of VS Code
+2. Select "Configure File Association for '.dtlv.edn'..."
+3. Choose "Clojure"
+4. Format with `Shift+Alt+F` or Calva's `Ctrl+Alt+L =`
+5. Switch back to "Datalevin Query" to see the Run Query button
 
-2. **Manual Format**: Use `Shift+Alt+F` (Windows/Linux) or `Shift+Option+F` (Mac)
+**Option 2: Permanent (always use Clojure mode)**
 
-3. **Calva Format**: Use `Ctrl+Alt+L` then `=` for Calva's formatting
+Add to your workspace or user `settings.json`:
+```json
+{
+  "files.associations": {
+    "*.dtlv.edn": "clojure"
+  }
+}
+```
 
-The extension sets `*.dtlv.edn` files to use Clojure language mode, so all Clojure formatters and tools will work automatically.
+**Note**: Using Clojure mode removes the "Run Query" CodeLens button. You can still run queries via:
+- Command Palette: `Levin: Run Query`
+- Keyboard: `Ctrl+Enter` (still works in Clojure mode)
+- Right-click context menu
+
+**Option 3: Best of both worlds**
+
+Keep files as `datalevin-query` and use Calva's format on selection:
+1. Select the query text you want to format
+2. Use Calva's paredit commands or formatting shortcuts
+3. Keep the Run Query button functionality
 
 ## Development
 
