@@ -357,7 +357,8 @@
     },
     "configurationDefaults": {
       "[datalevin-query]": {
-        "editor.formatOnSave": false
+        "editor.formatOnSave": false,
+        "editor.defaultFormatter": "kaybosompem.levin"
       }
     }
   },
