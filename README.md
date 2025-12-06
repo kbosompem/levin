@@ -135,35 +135,35 @@ Create `.dtlv.edn` files for your queries:
 
 ### Formatting .dtlv.edn Files
 
-Levin includes a **built-in EDN formatter** that works out of the box!
+**Recommended: Use cljfmt Extension**
 
-**Built-in Formatter (Recommended)**
-- Use `Shift+Option+F` (Mac) or `Shift+Alt+F` (Windows/Linux)
-- Or right-click → "Format Document"
-- Keeps the Run Query button
-- No additional setup required
+Install the [cljfmt extension](https://marketplace.visualstudio.com/items?itemName=pedrorgirardi.cljfmt) for the best Clojure formatting experience:
 
-The built-in formatter:
-- Pretty-prints EDN structures with proper indentation
-- Formats query clauses (`:find`, `:where`, etc.) on separate lines
-- Handles maps, vectors, sets, keywords, and symbols
-- Works with nested data structures
-
-**Alternative: Use Calva for Advanced Formatting**
-
-If you prefer Calva's paredit and formatting features:
-
-1. **Temporary**: Change language mode to "Clojure" (bottom-right corner)
-2. **Permanent**: Add to `settings.json`:
+1. Install the `cljfmt` extension by pedrorgirardi
+2. Add to your `settings.json`:
    ```json
    {
      "files.associations": {
        "*.dtlv.edn": "clojure"
+     },
+     "[clojure]": {
+       "editor.defaultFormatter": "pedrorgirardi.cljfmt",
+       "editor.formatOnSave": true
      }
    }
    ```
+3. Format with `Shift+Option+F` (Mac) or `Shift+Alt+F` (Windows/Linux)
 
-**Note**: Using Clojure mode removes the Run Query CodeLens button, but you can still run with `Ctrl+Enter`.
+**Note**: This changes `.dtlv.edn` files to Clojure language mode, which removes the Run Query CodeLens button. You can still run queries with:
+- Keyboard: `Ctrl+Enter` (works in Clojure mode)
+- Command Palette: `Levin: Run Query`
+
+**Alternative: Built-in Formatter (Experimental)**
+
+Levin includes a basic EDN formatter that works in `datalevin-query` mode:
+- Keeps the Run Query button
+- Format with `Shift+Option+F` or right-click → "Format Document"
+- Less sophisticated than cljfmt but maintains all Levin features
 
 ## Development
 
