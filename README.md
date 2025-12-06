@@ -133,6 +133,26 @@ Create `.dtlv.edn` files for your queries:
 | `levin.resultPageSize` | `50` | Results per page in table view |
 | `levin.recentDatabases` | `[]` | Auto-populated list of recent databases |
 
+### Formatting .dtlv.edn Files
+
+The extension automatically associates `.dtlv.edn` files with Clojure for formatting. If you have Calva installed, you can:
+
+1. **Format on Save**: Add to your `settings.json`:
+   ```json
+   {
+     "[clojure]": {
+       "editor.formatOnSave": true,
+       "editor.defaultFormatter": "betterthantomorrow.calva"
+     }
+   }
+   ```
+
+2. **Manual Format**: Use `Shift+Alt+F` (Windows/Linux) or `Shift+Option+F` (Mac)
+
+3. **Calva Format**: Use `Ctrl+Alt+L` then `=` for Calva's formatting
+
+The extension sets `*.dtlv.edn` files to use Clojure language mode, so all Clojure formatters and tools will work automatically.
+
 ## Development
 
 ```bash

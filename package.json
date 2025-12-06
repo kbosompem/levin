@@ -354,6 +354,15 @@
           "description": "Recently opened database paths"
         }
       }
+    },
+    "configurationDefaults": {
+      "[datalevin-query]": {
+        "editor.formatOnSave": false,
+        "editor.defaultFormatter": "betterthantomorrow.calva"
+      },
+      "files.associations": {
+        "*.dtlv.edn": "clojure"
+      }
     }
   },
   "scripts": {

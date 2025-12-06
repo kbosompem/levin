@@ -1,0 +1,6 @@
+{:db "/Users/kay/Databases/juaso"
+ :query [:find ?attr ?type
+                                 :where
+                               [?e :levin.display/attribute ?attr]
+                                                [?e :levin.display/type ?type]]
+ :limit 50}
