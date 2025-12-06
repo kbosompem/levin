@@ -4,6 +4,7 @@ import { DatabaseTreeProvider, DatabaseTreeItem } from './providers/tree-provide
 import { QueryCompletionProvider } from './providers/completion-provider';
 import { QueryCodeLensProvider } from './providers/codelens-provider';
 import { QueryHoverProvider } from './providers/hover-provider';
+import { DatalevinQueryFormattingProvider } from './providers/format-provider';
 import { ResultsPanel } from './views/results-panel';
 import { EntityInspector } from './views/entity-inspector';
 import { SchemaEditor } from './views/schema-editor';
@@ -93,6 +94,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.languages.registerHoverProvider(
             selector,
             new QueryHoverProvider(dtlvBridge)
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerDocumentFormattingEditProvider(
+            selector,
+            new DatalevinQueryFormattingProvider()
         )
     );
 

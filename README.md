@@ -135,37 +135,35 @@ Create `.dtlv.edn` files for your queries:
 
 ### Formatting .dtlv.edn Files
 
-To use Clojure formatters (like Calva) on `.dtlv.edn` files:
+Levin includes a **built-in EDN formatter** that works out of the box!
 
-**Option 1: Temporary (per file)**
-1. Click the language mode in the bottom-right corner of VS Code
-2. Select "Configure File Association for '.dtlv.edn'..."
-3. Choose "Clojure"
-4. Format with `Shift+Alt+F` or Calva's `Ctrl+Alt+L =`
-5. Switch back to "Datalevin Query" to see the Run Query button
+**Built-in Formatter (Recommended)**
+- Use `Shift+Option+F` (Mac) or `Shift+Alt+F` (Windows/Linux)
+- Or right-click → "Format Document"
+- Keeps the Run Query button
+- No additional setup required
 
-**Option 2: Permanent (always use Clojure mode)**
+The built-in formatter:
+- Pretty-prints EDN structures with proper indentation
+- Formats query clauses (`:find`, `:where`, etc.) on separate lines
+- Handles maps, vectors, sets, keywords, and symbols
+- Works with nested data structures
 
-Add to your workspace or user `settings.json`:
-```json
-{
-  "files.associations": {
-    "*.dtlv.edn": "clojure"
-  }
-}
-```
+**Alternative: Use Calva for Advanced Formatting**
 
-**Note**: Using Clojure mode removes the "Run Query" CodeLens button. You can still run queries via:
-- Command Palette: `Levin: Run Query`
-- Keyboard: `Ctrl+Enter` (still works in Clojure mode)
-- Right-click context menu
+If you prefer Calva's paredit and formatting features:
 
-**Option 3: Best of both worlds**
+1. **Temporary**: Change language mode to "Clojure" (bottom-right corner)
+2. **Permanent**: Add to `settings.json`:
+   ```json
+   {
+     "files.associations": {
+       "*.dtlv.edn": "clojure"
+     }
+   }
+   ```
 
-Keep files as `datalevin-query` and use Calva's format on selection:
-1. Select the query text you want to format
-2. Use Calva's paredit commands or formatting shortcuts
-3. Keep the Run Query button functionality
+**Note**: Using Clojure mode removes the Run Query CodeLens button, but you can still run with `Ctrl+Enter`.
 
 ## Development
 

@@ -387,6 +387,7 @@
     "typescript": "^5.3.2"
   },
   "dependencies": {
-    "edn-data": "^1.1.2"
+    "edn-data": "^1.1.2",
+    "jsedn": "^0.4.1"
   }
 }
