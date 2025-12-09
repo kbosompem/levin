@@ -33,6 +33,9 @@ export class DtlvBridge {
     private openDatabases: Map<string, DatabaseInfo> = new Map();
     private outputChannel?: vscode.OutputChannel;
 
+    // Mutex locks for remote connections to prevent "multiple LMDB connections" error
+    private remoteLocks: Map<string, Promise<void>> = new Map();
+
     constructor(outputChannel?: vscode.OutputChannel) {
         this.outputChannel = outputChannel;
         this.loadSettings();
@@ -600,56 +603,108 @@ export class DtlvBridge {
     }
 
     /**
+     * Acquire a lock for a remote database connection
+     * This ensures only one query runs at a time per remote host/db
+     */
+    private async acquireRemoteLock(lockKey: string): Promise<() => void> {
+        // Wait for any existing lock to be released
+        while (this.remoteLocks.has(lockKey)) {
+            await this.remoteLocks.get(lockKey);
+        }
+
+        // Create a new lock with a resolver we can call to release it
+        let releaseLock: () => void;
+        const lockPromise = new Promise<void>(resolve => {
+            releaseLock = resolve;
+        });
+        this.remoteLocks.set(lockKey, lockPromise);
+
+        // Return the release function
+        return () => {
+            this.remoteLocks.delete(lockKey);
+            releaseLock!();
+        };
+    }
+
+    /**
      * Execute dtlv command with code
+     * For remote connections, requests are serialized to prevent "multiple LMDB connections" error
      */
     private async execDtlv(code: string, retries: number = 0, maxRetries: number = 3): Promise<QueryResult> {
-        // Log the query
-        this.log('\n' + '='.repeat(60));
-        this.log(`[${new Date().toISOString()}] Executing query...`);
-        this.log('Code:\n' + code);
-        this.log('='.repeat(60));
+        // Check if this is a remote connection
+        const isRemote = code.includes('dtlv://');
 
-        const result = await this.execDtlvInternal(code);
+        // Extract database path for lock key (host + db name)
+        const dbMatch = code.match(/dtlv:\/\/[^"]+/);
+        const lockKey = dbMatch ? dbMatch[0] : null;
 
-        // Check if this is a remote connection failure
-        const isRemoteConnectionError = result.error && (
-            result.error.includes('Connection refused') ||
-            result.error.includes('Unable to connect') ||
-            result.error.includes('java.net.ConnectException') ||
-            result.error.includes('Connection error')
-        );
+        // Acquire lock for remote connections (only on first attempt)
+        let releaseLock: (() => void) | null = null;
+        if (isRemote && lockKey && retries === 0) {
+            releaseLock = await this.acquireRemoteLock(lockKey);
+        }
 
-        if (!result.success && isRemoteConnectionError && retries < maxRetries) {
-            const attempt = retries + 1;
-            this.log(`\n⚠️  Connection failed. Retrying (${attempt}/${maxRetries})...`, true);
+        try {
+            // Only log full query on first attempt
+            if (retries === 0) {
+                this.log('\n' + '='.repeat(60));
+                this.log(`[${new Date().toISOString()}] Executing query...`);
+                this.log('Code:\n' + code);
+                this.log('='.repeat(60));
+            }
 
-            // Show notification to user
-            vscode.window.showWarningMessage(
-                `Connection to remote database failed. Retrying (${attempt}/${maxRetries})...`
+            const result = await this.execDtlvInternal(code);
+
+            // Check if this is a remote connection failure
+            const isRemoteConnectionError = result.error && (
+                result.error.includes('Connection refused') ||
+                result.error.includes('Unable to connect') ||
+                result.error.includes('java.net.ConnectException') ||
+                result.error.includes('Connection error')
             );
 
-            // Wait before retrying (exponential backoff)
-            const delay = Math.min(1000 * Math.pow(2, retries), 5000);
-            await new Promise(resolve => setTimeout(resolve, delay));
+            // Also check for the "multiple connections" error - this means we need to retry
+            const isMultipleConnectionError = result.error &&
+                result.error.includes('multiple LMDB connections');
 
-            return this.execDtlv(code, retries + 1, maxRetries);
-        }
+            if (!result.success && (isRemoteConnectionError || isMultipleConnectionError) && retries < maxRetries) {
+                const attempt = retries + 1;
+                this.log(`⚠️  Retry ${attempt}/${maxRetries}...`);
 
-        // Log the result
-        if (result.success) {
-            this.log('\n✓ Success');
-            this.log('Result:\n' + JSON.stringify(result.data, null, 2));
-        } else {
-            this.log('\n✗ Error: ' + result.error, true);
+                // Wait before retrying (exponential backoff)
+                const delay = Math.min(1000 * Math.pow(2, retries), 5000);
+                await new Promise(resolve => setTimeout(resolve, delay));
 
-            if (isRemoteConnectionError && retries >= maxRetries) {
-                vscode.window.showErrorMessage(
-                    `Failed to connect to remote database after ${maxRetries} retries. Check connection and credentials.`
-                );
+                // Release lock before retry so retry can acquire it
+                if (releaseLock) {
+                    releaseLock();
+                    releaseLock = null;
+                }
+
+                return this.execDtlv(code, retries + 1, maxRetries);
+            }
+
+            // Log the result
+            if (result.success) {
+                this.log('\n✓ Success');
+                this.log('Result:\n' + JSON.stringify(result.data, null, 2));
+            } else {
+                this.log('\n✗ Error: ' + result.error, true);
+
+                if ((isRemoteConnectionError || isMultipleConnectionError) && retries >= maxRetries) {
+                    vscode.window.showErrorMessage(
+                        `Failed to connect to remote database after ${maxRetries} retries. Check connection and credentials.`
+                    );
+                }
+            }
+
+            return result;
+        } finally {
+            // Always release the lock
+            if (releaseLock) {
+                releaseLock();
             }
         }
-
-        return result;
     }
 
     /**

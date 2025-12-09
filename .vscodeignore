@@ -10,5 +10,6 @@ vsc-extension-quickstart.md
 **/*.ts
 !out/**/*.js
 node_modules/**
+!node_modules/edn-data/**
 .kay/**
 levin-spec.md

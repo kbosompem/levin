@@ -86,9 +86,24 @@ export class DatabaseTreeItem extends vscode.TreeItem {
             const ns = this.data as { namespace: string; count: number };
             this.description = `${ns.count} entities`;
         } else if (this.itemType === 'database' && this.dbPath) {
-            this.tooltip = this.dbPath;
-            this.description = this.dbPath;
+            // For remote URIs, hide credentials in display
+            const displayPath = this.sanitizeDbPath(this.dbPath);
+            this.tooltip = displayPath;
+            this.description = displayPath;
         }
+    }
+
+    /**
+     * Sanitize database path to hide credentials for remote URIs
+     * dtlv://user:pass@host:port/db -> host:port/db
+     */
+    private sanitizeDbPath(dbPath: string): string {
+        if (dbPath.startsWith('dtlv://')) {
+            // Parse remote URI and show only host:port/dbname
+            const match = dbPath.match(/dtlv:\/\/(?:[^@]+@)?(.+)/);
+            return match ? match[1] : dbPath;
+        }
+        return dbPath;
     }
 }
 

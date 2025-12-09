@@ -4,7 +4,6 @@ import { DatabaseTreeProvider, DatabaseTreeItem } from './providers/tree-provide
 import { QueryCompletionProvider } from './providers/completion-provider';
 import { QueryCodeLensProvider } from './providers/codelens-provider';
 import { QueryHoverProvider } from './providers/hover-provider';
-import { DatalevinQueryFormattingProvider } from './providers/format-provider';
 import { ResultsPanel } from './views/results-panel';
 import { EntityInspector } from './views/entity-inspector';
 import { SchemaEditor } from './views/schema-editor';
@@ -35,23 +34,25 @@ let outputChannel: vscode.OutputChannel;
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     console.log('Levin extension is activating...');
 
-    // Create output channel
+    // Create output channel first so we can log errors
     outputChannel = vscode.window.createOutputChannel('Datalevin');
     context.subscriptions.push(outputChannel);
+    outputChannel.appendLine('Levin extension activation starting...');
 
-    // Initialize dtlv bridge
-    dtlvBridge = new DtlvBridge(outputChannel);
+    try {
+        // Initialize dtlv bridge
+        dtlvBridge = new DtlvBridge(outputChannel);
 
-    // Check if dtlv is installed
-    const dtlvInstalled = await dtlvBridge.checkDtlvInstalled();
-    if (!dtlvInstalled) {
-        await dtlvBridge.promptInstallDtlv();
-    }
+        // Check if dtlv is installed
+        const dtlvInstalled = await dtlvBridge.checkDtlvInstalled();
+        if (!dtlvInstalled) {
+            await dtlvBridge.promptInstallDtlv();
+        }
 
-    // Initialize tree providers
-    databaseTreeProvider = new DatabaseTreeProvider(dtlvBridge, context);
-    queryHistoryProvider = new QueryHistoryProvider(context);
-    savedQueriesProvider = new SavedQueriesProvider(context);
+        // Initialize tree providers
+        databaseTreeProvider = new DatabaseTreeProvider(dtlvBridge, context);
+        queryHistoryProvider = new QueryHistoryProvider(context);
+        savedQueriesProvider = new SavedQueriesProvider(context);
 
     // Register tree views
     const databaseTreeView = vscode.window.createTreeView('levin.databases', {
@@ -97,12 +98,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         )
     );
 
-    context.subscriptions.push(
-        vscode.languages.registerDocumentFormattingEditProvider(
-            selector,
-            new DatalevinQueryFormattingProvider()
-        )
-    );
 
     // Register commands
     registerCommands(context);
@@ -121,7 +116,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         })
     );
 
-    console.log('Levin extension activated successfully');
+        outputChannel.appendLine('Levin extension activated successfully');
+        console.log('Levin extension activated successfully');
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        outputChannel.appendLine(`Levin extension activation FAILED: ${errorMessage}`);
+        if (error instanceof Error && error.stack) {
+            outputChannel.appendLine(error.stack);
+        }
+        outputChannel.show();
+        vscode.window.showErrorMessage(`Levin extension failed to activate: ${errorMessage}`);
+        throw error;
+    }
 }
 
 function registerCommands(context: vscode.ExtensionContext): void {
