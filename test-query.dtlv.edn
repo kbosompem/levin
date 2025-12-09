@@ -1,0 +1,1 @@
+{:db "/tmp/test" :query [:find ?e :where [?e :user/name ?name]] :limit 50}

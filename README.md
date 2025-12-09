@@ -2,6 +2,9 @@
 
 > Browse, query, and manage Datalevin databases in VS Code
 
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/KayBosompem.levin?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=KayBosompem.levin)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/KayBosompem.levin)](https://marketplace.visualstudio.com/items?itemName=KayBosompem.levin)
+
 **Levin** (archaic English for "lightning") is a VS Code extension that provides a visual interface for [Datalevin](https://github.com/juji-io/datalevin) databases. It communicates directly with the `dtlv` CLI, requiring no REPL or Clojure setup.
 
 ## Features
@@ -42,20 +45,95 @@
 - Execute transact operations
 - Validation before commit
 
-## Requirements
+## Installation
 
-- **Datalevin CLI (`dtlv`)** - Install Datalevin and ensure `dtlv` is in your PATH
-  - Via Homebrew: `brew install datalevin`
-  - Or download from [Datalevin releases](https://github.com/juji-io/datalevin/releases)
+### 1. Install the Levin Extension
+
+**From VS Code Marketplace (Recommended):**
+- Open VS Code
+- Go to Extensions (`Cmd+Shift+X` / `Ctrl+Shift+X`)
+- Search for "Levin"
+- Click Install
+
+**Or from command line:**
+```bash
+code --install-extension KayBosompem.levin
+```
+
+### 2. Install Datalevin CLI
+
+Levin requires the `dtlv` command-line tool to be installed and available in your PATH.
+
+#### macOS
+
+**Using Homebrew (recommended):**
+```bash
+brew install datalevin
+```
+
+**Or download the binary:**
+```bash
+# Download the latest release
+curl -L https://github.com/juji-io/datalevin/releases/latest/download/dtlv-0.9.27-macos-amd64.zip -o dtlv.zip
+
+# For Apple Silicon (M1/M2/M3):
+curl -L https://github.com/juji-io/datalevin/releases/latest/download/dtlv-0.9.27-macos-aarch64.zip -o dtlv.zip
+
+# Extract and install
+unzip dtlv.zip
+sudo mv dtlv /usr/local/bin/
+chmod +x /usr/local/bin/dtlv
+```
+
+#### Linux
+
+```bash
+# Download the latest release (x64)
+curl -L https://github.com/juji-io/datalevin/releases/latest/download/dtlv-0.9.27-linux-amd64.zip -o dtlv.zip
+
+# For ARM64:
+curl -L https://github.com/juji-io/datalevin/releases/latest/download/dtlv-0.9.27-linux-aarch64.zip -o dtlv.zip
+
+# Extract and install
+unzip dtlv.zip
+sudo mv dtlv /usr/local/bin/
+chmod +x /usr/local/bin/dtlv
+```
+
+#### Windows
+
+1. Download the latest release from [Datalevin releases](https://github.com/juji-io/datalevin/releases)
+   - Choose `dtlv-X.X.X-windows-amd64.zip`
+2. Extract `dtlv.exe` to a folder (e.g., `C:\Program Files\Datalevin\`)
+3. Add that folder to your PATH:
+   - Open System Properties → Environment Variables
+   - Edit the `Path` variable and add `C:\Program Files\Datalevin\`
+4. Restart VS Code
+
+#### Verify Installation
+
+```bash
+dtlv --version
+# Should output: Datalevin (version: X.X.X)
+```
+
+### 3. Configure (Optional)
+
+If `dtlv` is not in your PATH, you can specify its location in VS Code settings:
+
+```json
+{
+  "levin.dtlvPath": "/path/to/dtlv"
+}
+```
 
 ## Quick Start
 
-1. Install the Levin extension
-2. Ensure `dtlv` CLI is installed and in your PATH
-3. Open the Levin sidebar (lightning bolt icon)
-4. Click "Open Database" or use `Cmd+Alt+L O` (Mac) / `Ctrl+Alt+L O` (Windows/Linux)
-5. Choose "Local Database" or "Remote Server"
-6. Start exploring!
+1. Open the Levin sidebar (lightning bolt icon in the Activity Bar)
+2. Click "Open Database..." or use `Cmd+Alt+L O` (Mac) / `Ctrl+Alt+L O` (Windows/Linux)
+3. Choose "Datalog Database" or "Key-Value Store"
+4. Select a local folder or enter a remote server URI
+5. Start exploring!
 
 ### Opening a Local Database
 
@@ -135,9 +213,7 @@ Create `.dtlv.edn` files for your queries:
 
 ### Formatting .dtlv.edn Files
 
-**Recommended: Use cljfmt Extension**
-
-Install the [cljfmt extension](https://marketplace.visualstudio.com/items?itemName=pedrorgirardi.cljfmt) for the best Clojure formatting experience:
+For formatting query files, install the [cljfmt extension](https://marketplace.visualstudio.com/items?itemName=pedrorgirardi.cljfmt):
 
 1. Install the `cljfmt` extension by pedrorgirardi
 2. Add to your `settings.json`:
@@ -152,18 +228,8 @@ Install the [cljfmt extension](https://marketplace.visualstudio.com/items?itemNa
      }
    }
    ```
-3. Format with `Shift+Option+F` (Mac) or `Shift+Alt+F` (Windows/Linux)
 
-**Note**: This changes `.dtlv.edn` files to Clojure language mode, which removes the Run Query CodeLens button. You can still run queries with:
-- Keyboard: `Ctrl+Enter` (works in Clojure mode)
-- Command Palette: `Levin: Run Query`
-
-**Alternative: Built-in Formatter (Experimental)**
-
-Levin includes a basic EDN formatter that works in `datalevin-query` mode:
-- Keeps the Run Query button
-- Format with `Shift+Option+F` or right-click → "Format Document"
-- Less sophisticated than cljfmt but maintains all Levin features
+**Note**: This changes `.dtlv.edn` files to Clojure mode, which removes the CodeLens "Run Query" button. You can still run queries with `Ctrl+Enter` or the Command Palette.
 
 ## Development
 
