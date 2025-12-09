@@ -2,8 +2,8 @@
 
 > Browse, query, and manage Datalevin databases in VS Code
 
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/KayBosompem.levin?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=KayBosompem.levin)
-[![Installs](https://img.shields.io/visual-studio-marketplace/i/KayBosompem.levin)](https://marketplace.visualstudio.com/items?itemName=KayBosompem.levin)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/KwabenaBosompem.levin?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=KwabenaBosompem.levin)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/KwabenaBosompem.levin)](https://marketplace.visualstudio.com/items?itemName=KwabenaBosompem.levin)
 
 **Levin** (archaic English for "lightning") is a VS Code extension that provides a visual interface for [Datalevin](https://github.com/juji-io/datalevin) databases. It communicates directly with the `dtlv` CLI, requiring no REPL or Clojure setup.
 
@@ -57,7 +57,7 @@
 
 **Or from command line:**
 ```bash
-code --install-extension KayBosompem.levin
+code --install-extension KwabenaBosompem.levin
 ```
 
 ### 2. Install Datalevin CLI
