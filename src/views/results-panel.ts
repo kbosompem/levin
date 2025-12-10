@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { DtlvBridge } from '../dtlv-bridge';
-import { formatValue } from '../utils/formatters';
+import { formatValue, extractFindColumns } from '../utils/formatters';
 
 interface QueryResult {
     total: number;
@@ -13,15 +13,19 @@ export class ResultsPanel {
     private panel: vscode.WebviewPanel | undefined;
     private currentResults: QueryResult | undefined;
     private currentDbPath: string = '';
+    private currentQuery: string = '';
+    private columnNames: string[] = [];
     private currentView: 'table' | 'tree' | 'raw' = 'table';
     private currentPage: number = 0;
     private pageSize: number = 50;
 
     constructor(private _dtlvBridge: DtlvBridge) {}
 
-    show(results: unknown, dbPath: string): void {
+    show(results: unknown, dbPath: string, query?: string): void {
         this.currentResults = results as QueryResult;
         this.currentDbPath = dbPath;
+        this.currentQuery = query || '';
+        this.columnNames = query ? extractFindColumns(query) : [];
         this.currentPage = 0;
 
         if (!this.panel) {
@@ -275,7 +279,9 @@ export class ResultsPanel {
 
         let html = '<table><thead><tr>';
         for (let i = 0; i < colCount; i++) {
-            html += `<th>Column ${i + 1}</th>`;
+            // Use extracted column name if available, otherwise fall back to generic name
+            const colName = this.columnNames[i] || `Column ${i + 1}`;
+            html += `<th>${this.escapeHtml(colName)}</th>`;
         }
         html += '</tr></thead><tbody>';
 
@@ -308,8 +314,9 @@ export class ResultsPanel {
 
             if (Array.isArray(row)) {
                 for (let j = 0; j < row.length; j++) {
+                    const colName = this.columnNames[j] || `[${j}]`;
                     html += `<div class="tree-node" style="margin-left: 16px;">`;
-                    html += `<span class="tree-node-key">[${j}]</span>: `;
+                    html += `<span class="tree-node-key">${this.escapeHtml(colName)}</span>: `;
                     html += `<span class="tree-node-value">${this.escapeHtml(formatValue(row[j]))}</span>`;
                     html += `</div>`;
                 }
@@ -419,6 +426,22 @@ export class ResultsPanel {
 
     private toCsv(data: unknown[][]): string {
         const lines: string[] = [];
+
+        // Add header row if we have column names
+        if (this.columnNames.length > 0 && data.length > 0) {
+            const firstRow = data[0];
+            const colCount = Array.isArray(firstRow) ? firstRow.length : 1;
+            const headers: string[] = [];
+            for (let i = 0; i < colCount; i++) {
+                const colName = this.columnNames[i] || `Column ${i + 1}`;
+                if (colName.includes(',') || colName.includes('"') || colName.includes('\n')) {
+                    headers.push(`"${colName.replace(/"/g, '""')}"`);
+                } else {
+                    headers.push(colName);
+                }
+            }
+            lines.push(headers.join(','));
+        }
 
         for (const row of data) {
             const rowArray = Array.isArray(row) ? row : [row];

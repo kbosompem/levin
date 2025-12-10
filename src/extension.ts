@@ -1064,7 +1064,7 @@ async function executeQuery(context: vscode.ExtensionContext, queryText: string)
                 if (!resultsPanel) {
                     resultsPanel = new ResultsPanel(dtlvBridge);
                 }
-                resultsPanel.show(result.data, dbPath);
+                resultsPanel.show(result.data, dbPath, queryPortion);
             } else {
                 // Show error in dedicated error panel
                 if (!errorPanel) {

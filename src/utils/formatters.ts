@@ -174,3 +174,119 @@ export function parseAttributeParts(attr: string): { namespace: string; name: st
 
     return { namespace: '', name: cleanAttr };
 }
+
+/**
+ * Extract column names from a Datalog :find clause.
+ *
+ * Examples:
+ *   [:find ?e ?name :where ...] -> ['?e', '?name']
+ *   [:find (count ?e) :where ...] -> ['count(?e)']
+ *   [:find (pull ?e [:name :age]) :where ...] -> ['pull(?e)']
+ *   [:find ?e . :where ...] -> ['?e'] (scalar)
+ *   [:find [?e ...] :where ...] -> ['?e'] (collection)
+ */
+export function extractFindColumns(query: string): string[] {
+    // Extract the :find clause content up to :where, :in, or end of query structure
+    const findMatch = query.match(/:find\s+([\s\S]*?)(?=\s*:where|\s*:in|\s*:keys|\s*:strs|\s*:syms|\s*\]\s*$)/i);
+    if (!findMatch) {
+        return [];
+    }
+
+    const findClause = findMatch[1].trim();
+    const columns: string[] = [];
+
+    // Tokenize the find clause, handling nested expressions
+    let i = 0;
+    while (i < findClause.length) {
+        // Skip whitespace
+        while (i < findClause.length && /\s/.test(findClause[i])) {
+            i++;
+        }
+        if (i >= findClause.length) break;
+
+        const char = findClause[i];
+
+        // Skip result modifiers: . (scalar) or ... (collection marker)
+        if (char === '.') {
+            i++;
+            continue;
+        }
+
+        // Handle variable: ?name or _
+        if (char === '?' || char === '_') {
+            let varName = '';
+            while (i < findClause.length && /[a-zA-Z0-9_?-]/.test(findClause[i])) {
+                varName += findClause[i];
+                i++;
+            }
+            if (varName) {
+                columns.push(varName);
+            }
+            continue;
+        }
+
+        // Handle aggregate or pull expression: (count ?e), (pull ?e [...])
+        if (char === '(') {
+            const startIdx = i;
+            let depth = 1;
+            i++; // skip opening paren
+
+            while (i < findClause.length && depth > 0) {
+                if (findClause[i] === '(') depth++;
+                else if (findClause[i] === ')') depth--;
+                i++;
+            }
+
+            const expr = findClause.slice(startIdx, i).trim();
+            const formatted = formatFindExpression(expr);
+            if (formatted) {
+                columns.push(formatted);
+            }
+            continue;
+        }
+
+        // Handle collection syntax [?e ...]
+        if (char === '[') {
+            let depth = 1;
+            i++; // skip opening bracket
+            let innerContent = '';
+
+            while (i < findClause.length && depth > 0) {
+                if (findClause[i] === '[') depth++;
+                else if (findClause[i] === ']') depth--;
+                if (depth > 0) innerContent += findClause[i];
+                i++;
+            }
+
+            // Extract variable from [?e ...]
+            const varMatch = innerContent.match(/(\?[a-zA-Z0-9_-]+)/);
+            if (varMatch) {
+                columns.push(varMatch[1]);
+            }
+            continue;
+        }
+
+        // Skip any other character
+        i++;
+    }
+
+    return columns;
+}
+
+/**
+ * Format a find expression like (count ?e) or (pull ?e [...]) into a column name
+ */
+function formatFindExpression(expr: string): string {
+    // Remove outer parens
+    const inner = expr.slice(1, -1).trim();
+
+    // Match function name and first argument
+    const match = inner.match(/^([a-zA-Z_-]+)\s+(\?[a-zA-Z0-9_-]+)/);
+    if (match) {
+        const [, fnName, varName] = match;
+        return `${fnName}(${varName})`;
+    }
+
+    // Fallback: just return the expression cleaned up
+    return expr.replace(/\s+/g, ' ');
+}

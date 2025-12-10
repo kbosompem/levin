@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { formatValue, truncate, toEdn, parseAttributeParts } from '../../utils/formatters';
+import { formatValue, truncate, toEdn, parseAttributeParts, extractFindColumns } from '../../utils/formatters';
 
 suite('Formatters Test Suite', () => {
     suite('formatValue', () => {
@@ -102,6 +102,75 @@ suite('Formatters Test Suite', () => {
             const result = parseAttributeParts(':name');
             assert.strictEqual(result.namespace, '');
             assert.strictEqual(result.name, 'name');
+        });
+    });
+
+    suite('extractFindColumns', () => {
+        test('Should extract simple variables', () => {
+            const query = '[:find ?e ?name ?age :where [?e :user/name ?name]]';
+            const columns = extractFindColumns(query);
+            assert.deepStrictEqual(columns, ['?e', '?name', '?age']);
+        });
+
+        test('Should handle multiline query', () => {
+            const query = `[:find ?e ?name
+                           :where [?e :user/name ?name]]`;
+            const columns = extractFindColumns(query);
+            assert.deepStrictEqual(columns, ['?e', '?name']);
+        });
+
+        test('Should extract aggregate functions', () => {
+            const query = '[:find (count ?e) :where [?e :user/name _]]';
+            const columns = extractFindColumns(query);
+            assert.deepStrictEqual(columns, ['count(?e)']);
+        });
+
+        test('Should extract multiple aggregates', () => {
+            const query = '[:find (count ?e) (sum ?amount) :where [?e :order/amount ?amount]]';
+            const columns = extractFindColumns(query);
+            assert.deepStrictEqual(columns, ['count(?e)', 'sum(?amount)']);
+        });
+
+        test('Should handle pull expressions', () => {
+            const query = '[:find (pull ?e [:name :age]) :where [?e :user/name _]]';
+            const columns = extractFindColumns(query);
+            assert.deepStrictEqual(columns, ['pull(?e)']);
+        });
+
+        test('Should handle scalar result (single value with .)', () => {
+            const query = '[:find ?name . :where [?e :user/name ?name]]';
+            const columns = extractFindColumns(query);
+            assert.deepStrictEqual(columns, ['?name']);
+        });
+
+        test('Should handle collection result [?e ...]', () => {
+            const query = '[:find [?name ...] :where [?e :user/name ?name]]';
+            const columns = extractFindColumns(query);
+            assert.deepStrictEqual(columns, ['?name']);
+        });
+
+        test('Should handle mixed variables and aggregates', () => {
+            const query = '[:find ?category (count ?e) (avg ?price) :where [?e :product/category ?category] [?e :product/price ?price]]';
+            const columns = extractFindColumns(query);
+            assert.deepStrictEqual(columns, ['?category', 'count(?e)', 'avg(?price)']);
+        });
+
+        test('Should return empty array for invalid query', () => {
+            const query = '{:db "/path/to/db"}';
+            const columns = extractFindColumns(query);
+            assert.deepStrictEqual(columns, []);
+        });
+
+        test('Should handle query with :in clause', () => {
+            const query = '[:find ?e ?name :in $ ?search :where [?e :user/name ?name]]';
+            const columns = extractFindColumns(query);
+            assert.deepStrictEqual(columns, ['?e', '?name']);
+        });
+
+        test('Should handle query with :keys', () => {
+            const query = '[:find ?e ?name :keys id name :where [?e :user/name ?name]]';
+            const columns = extractFindColumns(query);
+            assert.deepStrictEqual(columns, ['?e', '?name']);
         });
     });
 });
