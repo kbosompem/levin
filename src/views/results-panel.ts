@@ -47,6 +47,9 @@ export class ResultsPanel {
                 this.handleMessage.bind(this),
                 undefined
             );
+        } else {
+            // Reveal existing panel
+            this.panel.reveal(vscode.ViewColumn.Beside);
         }
 
         this.updateContent();
@@ -275,30 +278,68 @@ export class ResultsPanel {
         }
 
         const firstRow = results[0];
-        const colCount = Array.isArray(firstRow) ? firstRow.length : 1;
+
+        // Check if results are maps (from :keys/:strs/:syms) or tuples
+        const isMapResult = firstRow && typeof firstRow === 'object' && !Array.isArray(firstRow);
 
         let html = '<table><thead><tr>';
-        for (let i = 0; i < colCount; i++) {
-            // Use extracted column name if available, otherwise fall back to generic name
-            const colName = this.columnNames[i] || `Column ${i + 1}`;
-            html += `<th>${this.escapeHtml(colName)}</th>`;
-        }
-        html += '</tr></thead><tbody>';
 
-        for (const row of results) {
-            html += '<tr>';
-            const rowArray = Array.isArray(row) ? row : [row];
-            for (const cell of rowArray) {
-                const formatted = formatValue(cell);
-                const isEntityId = typeof cell === 'number' && Number.isInteger(cell);
-
-                if (isEntityId) {
-                    html += `<td><span class="entity-link" onclick="inspectEntity(${cell})">${formatted}</span></td>`;
-                } else {
-                    html += `<td>${this.escapeHtml(formatted)}</td>`;
-                }
+        if (isMapResult) {
+            // For map results, use column names or object keys
+            const keys = this.columnNames.length > 0
+                ? this.columnNames
+                : Object.keys(firstRow as object);
+            for (const key of keys) {
+                html += `<th>${this.escapeHtml(String(key))}</th>`;
             }
-            html += '</tr>';
+            html += '</tr></thead><tbody>';
+
+            for (const row of results) {
+                html += '<tr>';
+                const rowObj = row as unknown as Record<string, unknown>;
+                const keys = this.columnNames.length > 0
+                    ? this.columnNames
+                    : Object.keys(rowObj);
+                for (const key of keys) {
+                    // Handle both keyword keys (:key) and plain keys (key)
+                    const value = rowObj[key] ?? rowObj[`:${key}`] ?? rowObj[key.replace(/^:/, '')];
+                    const formatted = formatValue(value);
+                    const isEntityId = typeof value === 'number' && Number.isInteger(value);
+
+                    if (isEntityId) {
+                        html += `<td><span class="entity-link" onclick="inspectEntity(${value})">${formatted}</span></td>`;
+                    } else {
+                        html += `<td>${this.escapeHtml(formatted)}</td>`;
+                    }
+                }
+                html += '</tr>';
+            }
+        } else {
+            // For tuple results (arrays)
+            const colCount = Array.isArray(firstRow) ? firstRow.length : 1;
+
+            for (let i = 0; i < colCount; i++) {
+                // Use extracted column name if available, otherwise fall back to generic name
+                const colName = this.columnNames[i] || `Column ${i + 1}`;
+                html += `<th>${this.escapeHtml(colName)}</th>`;
+            }
+            html += '</tr></thead><tbody>';
+
+            for (const row of results) {
+                html += '<tr>';
+                const rowArray = Array.isArray(row) ? row : [row];
+                for (const cell of rowArray) {
+                    const formatted = formatValue(cell);
+                    const isEntityId = typeof cell === 'number' && Number.isInteger(cell);
+
+                    if (isEntityId) {
+                        html += `<td><span class="entity-link" onclick="inspectEntity(${cell})">${formatted}</span></td>`;
+                    } else {
+                        html += `<td>${this.escapeHtml(formatted)}</td>`;
+                    }
+                }
+                html += '</tr>';
+            }
         }
 
         html += '</tbody></table>';
@@ -318,6 +359,19 @@ export class ResultsPanel {
                     html += `<div class="tree-node" style="margin-left: 16px;">`;
                     html += `<span class="tree-node-key">${this.escapeHtml(colName)}</span>: `;
                     html += `<span class="tree-node-value">${this.escapeHtml(formatValue(row[j]))}</span>`;
+                    html += `</div>`;
+                }
+            } else if (typeof row === 'object' && row !== null) {
+                // Handle map results
+                const rowObj = row as Record<string, unknown>;
+                const keys = this.columnNames.length > 0
+                    ? this.columnNames
+                    : Object.keys(rowObj);
+                for (const key of keys) {
+                    const value = rowObj[key] ?? rowObj[`:${key}`] ?? rowObj[key.replace(/^:/, '')];
+                    html += `<div class="tree-node" style="margin-left: 16px;">`;
+                    html += `<span class="tree-node-key">${this.escapeHtml(String(key))}</span>: `;
+                    html += `<span class="tree-node-value">${this.escapeHtml(formatValue(value))}</span>`;
                     html += `</div>`;
                 }
             } else {

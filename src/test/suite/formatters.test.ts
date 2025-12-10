@@ -167,10 +167,24 @@ suite('Formatters Test Suite', () => {
             assert.deepStrictEqual(columns, ['?e', '?name']);
         });
 
-        test('Should handle query with :keys', () => {
+        test('Should handle query with :keys - use keys as column names', () => {
             const query = '[:find ?e ?name :keys id name :where [?e :user/name ?name]]';
             const columns = extractFindColumns(query);
-            assert.deepStrictEqual(columns, ['?e', '?name']);
+            assert.deepStrictEqual(columns, ['id', 'name']);
+        });
+
+        test('Should handle query with :keys multiline', () => {
+            const query = `[:find ?contact ?e ?fullname
+                :keys contact-name id fullname
+                :where [?e :customer/name ?contact]]`;
+            const columns = extractFindColumns(query);
+            assert.deepStrictEqual(columns, ['contact-name', 'id', 'fullname']);
+        });
+
+        test('Should handle query with :strs', () => {
+            const query = '[:find ?e ?name :strs id name :where [?e :user/name ?name]]';
+            const columns = extractFindColumns(query);
+            assert.deepStrictEqual(columns, ['id', 'name']);
         });
     });
 });

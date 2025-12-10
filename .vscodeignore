@@ -13,3 +13,11 @@ node_modules/**
 !node_modules/edn-data/**
 .kay/**
 levin-spec.md
+
+# Cache directories
+.clj-kondo/**
+.lsp/**
+.levin/**
+
+# Build artifacts
+*.vsix

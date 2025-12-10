@@ -46,6 +46,22 @@ export class QueryCodeLensProvider implements vscode.CodeLensProvider {
             lenses.push(saveLens);
         }
 
+        // Look for transaction definitions (maps with :transact key)
+        const transactPattern = /\{[^{}]*:transact\s*\[/g;
+
+        while ((match = transactPattern.exec(text)) !== null) {
+            const startPos = document.positionAt(match.index);
+            const range = new vscode.Range(startPos, startPos);
+
+            // Run Transaction lens
+            const runLens = new vscode.CodeLens(range, {
+                title: '$(database) Run Transaction',
+                command: 'levin.runQueryAtLine',
+                arguments: [startPos.line]
+            });
+            lenses.push(runLens);
+        }
+
         // If no query blocks found, provide lens at top of file
         if (lenses.length === 0 && text.includes(':find')) {
             const range = new vscode.Range(0, 0, 0, 0);

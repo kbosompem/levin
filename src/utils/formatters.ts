@@ -184,8 +184,38 @@ export function parseAttributeParts(attr: string): { namespace: string; name: st
  *   [:find (pull ?e [:name :age]) :where ...] -> ['pull(?e)']
  *   [:find ?e . :where ...] -> ['?e'] (scalar)
  *   [:find [?e ...] :where ...] -> ['?e'] (collection)
+ *   [:find ?e ?name :keys id name :where ...] -> ['id', 'name'] (use :keys)
  */
 export function extractFindColumns(query: string): string[] {
+    // First check for :keys, :strs, or :syms which override variable names
+    const keysMatch = query.match(/:keys\s+([\s\S]*?)(?=\s*:where|\s*:in|\s*\]\s*$)/i);
+    if (keysMatch) {
+        const keysClause = keysMatch[1].trim();
+        // Extract symbols (unquoted words)
+        const keys = keysClause.match(/[a-zA-Z_-][a-zA-Z0-9_-]*/g);
+        if (keys && keys.length > 0) {
+            return keys;
+        }
+    }
+
+    const strsMatch = query.match(/:strs\s+([\s\S]*?)(?=\s*:where|\s*:in|\s*\]\s*$)/i);
+    if (strsMatch) {
+        const strsClause = strsMatch[1].trim();
+        const strs = strsClause.match(/[a-zA-Z_-][a-zA-Z0-9_-]*/g);
+        if (strs && strs.length > 0) {
+            return strs;
+        }
+    }
+
+    const symsMatch = query.match(/:syms\s+([\s\S]*?)(?=\s*:where|\s*:in|\s*\]\s*$)/i);
+    if (symsMatch) {
+        const symsClause = symsMatch[1].trim();
+        const syms = symsClause.match(/[a-zA-Z_-][a-zA-Z0-9_-]*/g);
+        if (syms && syms.length > 0) {
+            return syms;
+        }
+    }
+
     // Extract the :find clause content up to :where, :in, or end of query structure
     const findMatch = query.match(/:find\s+([\s\S]*?)(?=\s*:where|\s*:in|\s*:keys|\s*:strs|\s*:syms|\s*\]\s*$)/i);
     if (!findMatch) {

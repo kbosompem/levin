@@ -386,8 +386,8 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
     // Internal command for running query from CodeLens
     context.subscriptions.push(
-        vscode.commands.registerCommand('levin.runQueryAtLine', async (_line: number) => {
-            await runCurrentQuery(context);
+        vscode.commands.registerCommand('levin.runQueryAtLine', async (line: number) => {
+            await runQueryAtLine(context, line);
         })
     );
 
@@ -1018,8 +1018,77 @@ async function runCurrentQuery(context: vscode.ExtensionContext): Promise<void> 
         return;
     }
 
-    const queryText = editor.document.getText();
+    // Try to find the query block at cursor position, otherwise use whole file
+    const cursorLine = editor.selection.active.line;
+    const queryText = extractQueryBlockAtLine(editor.document, cursorLine) || editor.document.getText();
     await executeQuery(context, queryText);
+}
+
+async function runQueryAtLine(context: vscode.ExtensionContext, line: number): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showWarningMessage('No active editor');
+        return;
+    }
+
+    const queryText = extractQueryBlockAtLine(editor.document, line);
+    if (!queryText) {
+        vscode.window.showWarningMessage('No query block found at this location');
+        return;
+    }
+    await executeQuery(context, queryText);
+}
+
+/**
+ * Extract the query block (EDN map with :db and :query) at or after the given line
+ */
+function extractQueryBlockAtLine(document: vscode.TextDocument, line: number): string | null {
+    const text = document.getText();
+
+    // Find all query block starts
+    const queryPattern = /\{[^{}]*:db\s+"[^"]+"/g;
+    let match;
+    let bestMatch: { start: number; end: number } | null = null;
+
+    while ((match = queryPattern.exec(text)) !== null) {
+        const matchStartPos = document.positionAt(match.index);
+
+        // Find the matching closing brace for this block
+        let braceCount = 0;
+        let blockEnd = match.index;
+
+        for (let i = match.index; i < text.length; i++) {
+            if (text[i] === '{') braceCount++;
+            else if (text[i] === '}') {
+                braceCount--;
+                if (braceCount === 0) {
+                    blockEnd = i + 1;
+                    break;
+                }
+            }
+        }
+
+        const matchEndPos = document.positionAt(blockEnd);
+
+        // Check if the given line falls within this block
+        if (line >= matchStartPos.line && line <= matchEndPos.line) {
+            bestMatch = { start: match.index, end: blockEnd };
+            break;
+        }
+
+        // If we haven't found a match yet and this block starts at or after our line,
+        // use it (for cases where CodeLens is at the start of the block)
+        if (!bestMatch && matchStartPos.line >= line) {
+            bestMatch = { start: match.index, end: blockEnd };
+            break;
+        }
+    }
+
+    if (bestMatch) {
+        return text.substring(bestMatch.start, bestMatch.end);
+    }
+
+    return null;
 }
 
 async function executeQuery(context: vscode.ExtensionContext, queryText: string): Promise<void> {
@@ -1036,49 +1105,100 @@ async function executeQuery(context: vscode.ExtensionContext, queryText: string)
         const dbPath = dbMatch?.[1];
 
         if (!dbPath) {
-            vscode.window.showErrorMessage('Query must specify :db with database path');
+            vscode.window.showErrorMessage('Must specify :db with database path');
             return;
         }
 
-        // Extract the query portion
-        const queryPortionMatch = queryText.match(/:query\s+(\[[\s\S]*?\])(?=\s*:|\s*\})/);
-        const queryPortion = queryPortionMatch?.[1] || '[:find ?e :where [?e :db/id _]]';
+        // Check if this is a transaction or a query
+        const hasTransact = /:transact\s+\[/.test(queryText);
+        const hasQuery = /:query\s+\[/.test(queryText);
 
-        // Extract limit
-        const limitMatch = queryText.match(/:limit\s+(\d+)/);
-        const limit = limitMatch ? parseInt(limitMatch[1], 10) : 50;
-
-        // Show progress
-        await vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: 'Running query...',
-            cancellable: false
-        }, async () => {
-            const result = await dtlvBridge.runQuery(dbPath, queryPortion, limit);
-
-            if (result.success) {
-                // Add to history
-                queryHistoryProvider.addQuery(queryText);
-
-                // Show results panel
-                if (!resultsPanel) {
-                    resultsPanel = new ResultsPanel(dtlvBridge);
-                }
-                resultsPanel.show(result.data, dbPath, queryPortion);
-            } else {
-                // Show error in dedicated error panel
-                if (!errorPanel) {
-                    errorPanel = new ErrorPanel();
-                }
-                errorPanel.show(result.error || 'Unknown error', queryPortion);
-
-                // Also show a brief notification
-                vscode.window.showErrorMessage('Query failed - see error panel for details');
-            }
-        });
+        if (hasTransact) {
+            await executeTransaction(dbPath, queryText);
+        } else if (hasQuery) {
+            await executeDatalogQuery(dbPath, queryText);
+        } else {
+            vscode.window.showErrorMessage('Must specify either :query or :transact');
+        }
     } catch (error) {
-        vscode.window.showErrorMessage(`Failed to execute query: ${error}`);
+        vscode.window.showErrorMessage(`Failed to execute: ${error}`);
     }
+}
+
+async function executeTransaction(dbPath: string, queryText: string): Promise<void> {
+    // Extract the transact portion - match balanced brackets
+    const transactMatch = queryText.match(/:transact\s+(\[[\s\S]*\])(?=\s*:|\s*\}|$)/);
+    if (!transactMatch) {
+        vscode.window.showErrorMessage('Could not parse :transact data');
+        return;
+    }
+
+    const txData = transactMatch[1];
+
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Executing transaction...',
+        cancellable: false
+    }, async () => {
+        const result = await dtlvBridge.transact(dbPath, txData);
+        outputChannel.appendLine(`Transaction executed. Success: ${result.success}`);
+
+        if (result.success) {
+            const data = result.data as { txId?: number; datomsCount?: number };
+            vscode.window.showInformationMessage(
+                `Transaction successful! TX ID: ${data.txId}, ${data.datomsCount} datoms added.`
+            );
+            // Refresh the explorer to show new data
+            vscode.commands.executeCommand('levin.refreshExplorer');
+        } else {
+            if (!errorPanel) {
+                errorPanel = new ErrorPanel();
+            }
+            errorPanel.show(result.error || 'Unknown error', txData);
+            vscode.window.showErrorMessage('Transaction failed - see error panel for details');
+        }
+    });
+}
+
+async function executeDatalogQuery(dbPath: string, queryText: string): Promise<void> {
+    // Extract the query portion
+    const queryPortionMatch = queryText.match(/:query\s+(\[[\s\S]*?\])(?=\s*:|\s*\})/);
+    const queryPortion = queryPortionMatch?.[1] || '[:find ?e :where [?e :db/id _]]';
+
+    // Extract limit
+    const limitMatch = queryText.match(/:limit\s+(\d+)/);
+    const limit = limitMatch ? parseInt(limitMatch[1], 10) : 50;
+
+    // Show progress
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Running query...',
+        cancellable: false
+    }, async () => {
+        const result = await dtlvBridge.runQuery(dbPath, queryPortion, limit);
+        outputChannel.appendLine(`Query executed. Success: ${result.success}, Results: ${(result.data as {results?: unknown[]})?.results?.length ?? 0}`);
+
+        if (result.success) {
+            // Add to history
+            queryHistoryProvider.addQuery(queryText);
+
+            // Show results panel
+            if (!resultsPanel) {
+                resultsPanel = new ResultsPanel(dtlvBridge);
+            }
+            outputChannel.appendLine(`Showing results with query: ${queryPortion.substring(0, 100)}...`);
+            resultsPanel.show(result.data, dbPath, queryPortion);
+        } else {
+            // Show error in dedicated error panel
+            if (!errorPanel) {
+                errorPanel = new ErrorPanel();
+            }
+            errorPanel.show(result.error || 'Unknown error', queryPortion);
+
+            // Also show a brief notification
+            vscode.window.showErrorMessage('Query failed - see error panel for details');
+        }
+    });
 }
 
 async function showEntityInspector(

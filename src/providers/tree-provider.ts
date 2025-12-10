@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { DtlvBridge, SchemaAttribute } from '../dtlv-bridge';
 
-export type TreeItemType = 'database' | 'db-folder' | 'schema-folder' | 'schema-item' | 'entities-folder' | 'entity-namespace' | 'relationships-folder' | 'rules-folder' | 'kv-store-folder' | 'queries-folder' | 'query-node' | 'open-database';
+export type TreeItemType = 'database' | 'db-folder' | 'schema-folder' | 'schema-item' | 'entities-folder' | 'entity-namespace' | 'relationships-folder' | 'rules-folder' | 'kv-store-folder' | 'queries-folder' | 'query-node' | 'transact-node' | 'open-database';
 
 export interface DatabaseFolder {
     name: string;
@@ -60,6 +60,9 @@ export class DatabaseTreeItem extends vscode.TreeItem {
                 break;
             case 'kv-store-folder':
                 this.iconPath = new vscode.ThemeIcon('key');
+                break;
+            case 'transact-node':
+                this.iconPath = new vscode.ThemeIcon('edit');
                 break;
             case 'queries-folder':
                 this.iconPath = new vscode.ThemeIcon('search');
@@ -384,6 +387,20 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
             arguments: [queryNode]
         };
         items.push(this.registerItem(queryNode));
+
+        // Transact node - clicking opens Transaction panel
+        const transactNode = new DatabaseTreeItem(
+            'Transact',
+            vscode.TreeItemCollapsibleState.None,
+            'transact-node',
+            dbPath
+        );
+        transactNode.command = {
+            command: 'levin.showTransactionPanel',
+            title: 'Open Transaction Panel',
+            arguments: [transactNode]
+        };
+        items.push(this.registerItem(transactNode));
 
         // Schema folder - clicking opens Schema Editor panel
         const schemaFolder = new DatabaseTreeItem(

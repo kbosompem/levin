@@ -5,6 +5,25 @@ All notable changes to the Levin extension will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2024-12-10
+
+### Added
+- **Transact Node in Explorer** - Added "Transact" node under each database in the tree for quick access to the Transaction panel
+- **Transaction Support in .dtlv.edn** - Execute transactions directly from .dtlv.edn files using `:transact` key
+  ```clojure
+  {:db "/path/to/db"
+   :transact [{:user/name "Alice" :user/email "alice@example.com"}]}
+  ```
+- **Transaction CodeLens** - "Run Transaction" button appears above `:transact` blocks
+- **Proper Column Names** - Query results now show variable names (`?name`, `?age`) instead of generic "Column 1", "Column 2"
+  - Supports `:keys`, `:strs`, `:syms` for custom column names
+  - Handles aggregates: `(count ?e)` → `count(?e)`
+  - Handles pull expressions: `(pull ?e [...])` → `pull(?e)`
+
+### Fixed
+- **Multiple Queries in File** - Running a query now executes the specific block at cursor/CodeLens, not the first query in the file
+- **Map Results Display** - Queries with `:keys` now display all columns correctly instead of showing `{3 entries}`
+
 ## [0.6.2] - 2024-12-09
 
 ### Added
