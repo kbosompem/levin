@@ -6,3 +6,8 @@ node_modules
 .DS_Store
 *.log
 .kay/
+
+# Editor/tooling caches
+.clj-kondo/
+.lsp/
+.levin/

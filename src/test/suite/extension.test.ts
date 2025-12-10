@@ -5,11 +5,11 @@ suite('Extension Test Suite', () => {
     vscode.window.showInformationMessage('Start all tests.');
 
     test('Extension should be present', () => {
-        assert.ok(vscode.extensions.getExtension('KayBosompem.levin'));
+        assert.ok(vscode.extensions.getExtension('KwabenaBosompem.levin'));
     });
 
     test('Extension should activate', async () => {
-        const ext = vscode.extensions.getExtension('KayBosompem.levin');
+        const ext = vscode.extensions.getExtension('KwabenaBosompem.levin');
         if (ext) {
             await ext.activate();
             assert.strictEqual(ext.isActive, true);
@@ -20,15 +20,19 @@ suite('Extension Test Suite', () => {
         const commands = await vscode.commands.getCommands(true);
 
         const expectedCommands = [
-            'levin.jackIn',
+            'levin.openDatabase',
             'levin.newQuery',
             'levin.runQuery',
             'levin.showEntity',
             'levin.refreshExplorer',
             'levin.exportResults',
-            'levin.disconnect',
-            'levin.addDatabase',
-            'levin.createDatabase'
+            'levin.closeDatabase',
+            'levin.createDatabase',
+            'levin.editSchema',
+            'levin.showTransactionPanel',
+            'levin.importData',
+            'levin.browseEntities',
+            'levin.showKvStore'
         ];
 
         for (const cmd of expectedCommands) {
