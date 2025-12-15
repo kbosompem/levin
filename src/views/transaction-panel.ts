@@ -41,6 +41,7 @@ export class TransactionPanel {
             );
         } else {
             this.panel.title = `Transaction: ${dbName}`;
+            this.panel.reveal(vscode.ViewColumn.Active);
         }
 
         this.updateContent();

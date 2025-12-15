@@ -200,26 +200,13 @@ export class DtlvBridge {
     }
 
     /**
-     * Get database schema by querying actual schema datoms
-     * The datalevin.core/schema fn only returns {:db/aid N}, so we query the schema entities directly
+     * Get database schema using datalevin.core/schema
+     * This returns the schema map directly (not queryable entities like Datomic)
      */
     async getSchema(dbPath: string): Promise<SchemaAttribute[]> {
         const code = `
-            (let [db @conn
-                  ;; Query all schema attributes with their properties
-                  schema-data (datalevin.core/q '[:find ?attr ?prop ?val
-                                                  :where
-                                                  [?e :db/ident ?attr]
-                                                  [?e ?prop ?val]
-                                                  [(not= ?prop :db/id)]
-                                                  [(not= ?prop :db/aid)]]
-                                                db)
-                  ;; Group by attribute
-                  grouped (reduce (fn [m [attr prop val]]
-                                    (assoc-in m [attr prop] val))
-                                  {}
-                                  schema-data)]
-              (->> grouped
+            (let [schema (datalevin.core/schema conn)]
+              (->> schema
                    (map (fn [[attr props]]
                           {:attribute (str attr)
                            :valueType (some-> (:db/valueType props) name)
@@ -275,13 +262,12 @@ export class DtlvBridge {
             (let [db @conn
                   result (datalevin.core/pull db '[*] ${entityId})
                   attrs (dissoc result :db/id)
-                  ;; Find which attributes are ref type
-                  ref-attrs (datalevin.core/q '[:find ?attr
-                                                :where
-                                                [?e :db/ident ?attr]
-                                                [?e :db/valueType :db.type/ref]]
-                                              db)
-                  ref-attr-set (set (map first ref-attrs))
+                  ;; Find which attributes are ref type from schema
+                  schema (datalevin.core/schema conn)
+                  ref-attr-set (->> schema
+                                    (filter (fn [[_ props]] (= :db.type/ref (:db/valueType props))))
+                                    (map first)
+                                    set)
                   ;; Helper to extract entity ID from ref (could be {:db/id N} or just N)
                   extract-id (fn [v]
                                (cond
@@ -394,30 +380,16 @@ export class DtlvBridge {
     /**
      * Import data with proper temp ID resolution.
      * Datalevin requires schema to be known at connection time for temp IDs to resolve.
-     * This method queries schema, rebuilds it in the format get-conn expects, then transacts data.
+     * This method gets schema via datalevin.core/schema, then reopens with it to transact data.
      */
     async importWithTempIds(dbPath: string, dataEdn: string): Promise<QueryResult> {
         const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
 
-        // Query schema from database, rebuild in get-conn format, then transact data
+        // Get schema from database, then reopen with it for proper temp ID resolution
         const code = `
-            (let [;; Get schema info via query (more reliable than schema fn)
+            (let [;; Get schema via schema fn
                   conn1 (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" {} {:mapsize 1000})
-                  db @conn1
-                  ;; Query all schema attributes with their properties
-                  schema-data (datalevin.core/q '[:find ?attr ?prop ?val
-                                                  :where
-                                                  [?e :db/ident ?attr]
-                                                  [?e ?prop ?val]
-                                                  [(not= ?prop :db/ident)]
-                                                  [(not= ?prop :db/id)]
-                                                  [(not= ?prop :db/aid)]]
-                                                db)
-                  ;; Build schema map: {:attr {:db/valueType :db.type/xxx ...}}
-                  schema-map (reduce (fn [m [attr prop val]]
-                                       (assoc-in m [attr prop] val))
-                                     {}
-                                     schema-data)
+                  schema-map (datalevin.core/schema conn1)
                   _ (datalevin.core/close conn1)
                   ;; Reopen with schema for proper temp ID resolution
                   conn2 (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" schema-map {:mapsize 1000})
@@ -520,20 +492,15 @@ export class DtlvBridge {
      */
     async getRefAttributes(dbPath: string): Promise<QueryResult> {
         const code = `
-            (let [db @conn
-                  ;; Query attributes with ref valueType
-                  ref-attrs (datalevin.core/q '[:find ?attr ?card ?comp
-                                                :where
-                                                [?e :db/ident ?attr]
-                                                [?e :db/valueType :db.type/ref]
-                                                [(get-else $ ?e :db/cardinality :db.cardinality/one) ?card]
-                                                [(get-else $ ?e :db/isComponent false) ?comp]]
-                                              db)]
+            (let [schema (datalevin.core/schema conn)
+                  ;; Filter attributes with ref valueType from schema
+                  ref-attrs (->> schema
+                                 (filter (fn [[_ props]] (= :db.type/ref (:db/valueType props)))))]
               (->> ref-attrs
-                   (map (fn [[attr card comp]]
+                   (map (fn [[attr props]]
                           {:attribute (str attr)
-                           :cardinality (name card)
-                           :isComponent comp}))
+                           :cardinality (name (or (:db/cardinality props) :db.cardinality/one))
+                           :isComponent (or (:db/isComponent props) false)}))
                    (sort-by :attribute)
                    vec))
         `.trim();
@@ -549,14 +516,13 @@ export class DtlvBridge {
     async discoverRefTargets(dbPath: string): Promise<QueryResult> {
         const code = `
             (let [db @conn
-                  ;; Get all ref attributes
-                  ref-attrs (datalevin.core/q '[:find ?attr
-                                                :where
-                                                [?e :db/ident ?attr]
-                                                [?e :db/valueType :db.type/ref]]
-                                              db)
+                  schema (datalevin.core/schema conn)
+                  ;; Get all ref attributes from schema
+                  ref-attrs (->> schema
+                                 (filter (fn [[_ props]] (= :db.type/ref (:db/valueType props))))
+                                 (map first))
                   ;; For each ref attr, find target entity namespaces from actual data
-                  results (for [[attr] ref-attrs
+                  results (for [attr ref-attrs
                                 :let [;; Query: find namespaces of attributes on referenced entities
                                       targets (datalevin.core/q '[:find ?target-ns
                                                                   :in $ ?ref-attr
@@ -567,17 +533,12 @@ export class DtlvBridge {
                                                                   [(some? ?target-ns)]]
                                                                 db attr)
                                       target-nses (->> targets (map first) distinct sort vec)
-                                      source-ns (namespace attr)]]
+                                      source-ns (namespace attr)
+                                      props (get schema attr)]]
                             {:attribute (str attr)
                              :source source-ns
                              :targets target-nses
-                             :cardinality (let [card (datalevin.core/q '[:find ?card .
-                                                                         :in $ ?attr
-                                                                         :where
-                                                                         [?e :db/ident ?attr]
-                                                                         [?e :db/cardinality ?card]]
-                                                                       db attr)]
-                                            (if card (name card) "one"))})]
+                             :cardinality (name (or (:db/cardinality props) :db.cardinality/one))})]
               (vec results))
         `.trim();
 
