@@ -1,6 +1,7 @@
 .vscode/**
 .vscode-test/**
 src/**
+!src/nlq/*.py
 .gitignore
 .yarnrc
 vsc-extension-quickstart.md
@@ -11,6 +12,12 @@ vsc-extension-quickstart.md
 !out/**/*.js
 node_modules/**
 !node_modules/edn-data/**
+# ONNX Runtime Web loaded via CDN in webview, no need to bundle
+# !node_modules/@huggingface/**
+# !node_modules/onnxruntime-common/**
+# !node_modules/onnxruntime-node/**
+# !node_modules/onnxruntime-web/**
+models/**
 .kay/**
 levin-spec.md
 

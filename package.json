@@ -2,7 +2,7 @@
   "name": "levin",
   "displayName": "Levin",
   "description": "Browse, query, and manage Datalevin databases in VS Code",
-  "version": "0.6.5",
+  "version": "0.7.0",
   "publisher": "KwabenaBosompem",
   "author": {
     "name": "Kwabena Bosompem"
@@ -170,6 +170,21 @@
       {
         "command": "levin.importFolders",
         "title": "Levin: Import Database Folders"
+      },
+      {
+        "command": "levin.nlqGenerate",
+        "title": "Levin: Generate Query from Natural Language",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "levin.nlqGenerateAndRun",
+        "title": "Levin: Generate and Run Query",
+        "icon": "$(play)"
+      },
+      {
+        "command": "levin.nlqRegenerate",
+        "title": "Levin: Regenerate Query",
+        "icon": "$(sparkle)"
       }
     ],
     "viewsContainers": {
@@ -364,7 +379,8 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "tsc -p ./ && npm run copy-nlq-scripts",
+    "copy-nlq-scripts": "mkdir -p out/nlq && cp src/nlq/*.py out/nlq/",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",

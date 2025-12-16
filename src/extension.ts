@@ -15,6 +15,7 @@ import { ErrorPanel } from './views/error-panel';
 import { KvStorePanel } from './views/kv-store-panel';
 import { QueryHistoryProvider } from './providers/query-history-provider';
 import { SavedQueriesProvider } from './providers/saved-queries-provider';
+import * as nlq from './nlq';
 
 let dtlvBridge: DtlvBridge;
 let databaseTreeProvider: DatabaseTreeProvider;
@@ -40,6 +41,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     outputChannel.appendLine('Levin extension activation starting...');
 
     try {
+        // Set extension path for NLQ module resolution
+        nlq.setExtensionPath(context.extensionPath);
+
         // Initialize dtlv bridge
         dtlvBridge = new DtlvBridge(outputChannel);
 
@@ -857,6 +861,27 @@ function registerCommands(context: vscode.ExtensionContext): void {
             }
         })
     );
+
+    // NLQ: Generate Query command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.nlqGenerate', async (line: number) => {
+            await nlqGenerateQuery(context, line, false);
+        })
+    );
+
+    // NLQ: Generate and Run command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.nlqGenerateAndRun', async (line: number) => {
+            await nlqGenerateQuery(context, line, true);
+        })
+    );
+
+    // NLQ: Regenerate command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.nlqRegenerate', async (line: number) => {
+            await nlqGenerateQuery(context, line, false);
+        })
+    );
 }
 
 /**
@@ -1276,6 +1301,199 @@ async function showKvStore(
     await kvStorePanel.show(dbPath);
 }
 
+/**
+ * Generate a Datalevin query from natural language using the NLQ model
+ */
+async function nlqGenerateQuery(
+    context: vscode.ExtensionContext,
+    line: number,
+    runAfterGenerate: boolean
+): Promise<void> {
+    outputChannel.appendLine(`[NLQ] nlqGenerateQuery called with line=${line}, runAfterGenerate=${runAfterGenerate}`);
+
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        outputChannel.appendLine('[NLQ] No active editor');
+        vscode.window.showWarningMessage('No active editor');
+        return;
+    }
+
+    outputChannel.appendLine(`[NLQ] Active editor: ${editor.document.uri.fsPath}`);
+
+    // Model will be downloaded on first use if not available
+    // The loadModel function in model-runner handles the download prompt
+
+    // Extract the NLQ block at the given line
+    const document = editor.document;
+    const text = document.getText();
+    outputChannel.appendLine(`[NLQ] Document text length: ${text.length}`);
+
+    // Find the NLQ block containing this line
+    const nlqBlock = extractNlqBlockAtLine(document, line);
+    if (!nlqBlock) {
+        outputChannel.appendLine(`[NLQ] No NLQ block found at line ${line}`);
+        vscode.window.showWarningMessage('No NLQ block found at this location');
+        return;
+    }
+
+    outputChannel.appendLine(`[NLQ] Found block: ${nlqBlock.text.substring(0, 100)}...`);
+
+    // Parse the block to get nlq, notes, and db
+    const parsed = nlq.parseNlqBlock(nlqBlock.text);
+    outputChannel.appendLine(`[NLQ] Parsed result: ${JSON.stringify(parsed)}`);
+    if (!parsed || !parsed.nlq) {
+        outputChannel.appendLine('[NLQ] Could not parse NLQ block');
+        vscode.window.showWarningMessage('Could not parse NLQ block');
+        return;
+    }
+
+    // Get the database path from the block or ask user
+    const dbMatch = nlqBlock.text.match(/:db\s+"([^"]+)"/);
+    let dbPath = dbMatch?.[1];
+    outputChannel.appendLine(`[NLQ] Database path from block: ${dbPath}`);
+
+    if (!dbPath) {
+        // Try to get from currently selected database or ask user
+        dbPath = await selectDatabase();
+        outputChannel.appendLine(`[NLQ] Database path from selection: ${dbPath}`);
+        if (!dbPath) {
+            vscode.window.showErrorMessage('Please specify a database with :db "path"');
+            return;
+        }
+    }
+
+    // Build the prompt with schema and rules context
+    await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Generating Datalevin query...',
+        cancellable: false
+    }, async () => {
+        try {
+            outputChannel.appendLine('[NLQ] Getting schema context...');
+            // Get schema context
+            const schemaContext = await nlq.getSchemaContext(dtlvBridge, dbPath!);
+            outputChannel.appendLine(`[NLQ] Schema context length: ${schemaContext?.length || 0}`);
+
+            outputChannel.appendLine('[NLQ] Getting rules context...');
+            // Get rules context
+            const rulesContext = await nlq.getRulesContext(dtlvBridge, dbPath!);
+            outputChannel.appendLine(`[NLQ] Rules context length: ${rulesContext?.length || 0}`);
+
+            // Build the prompt
+            const prompt = nlq.buildPrompt(parsed.nlq!, {
+                schema: schemaContext,
+                rules: rulesContext,
+                notes: parsed.notes
+            });
+
+            outputChannel.appendLine(`[NLQ] Built prompt (${prompt.length} chars):\n${prompt}`);
+
+            // Generate the query
+            outputChannel.appendLine('[NLQ] Calling nlq.generateQuery...');
+            const generatedQuery = await nlq.generateQuery(context, prompt);
+
+            outputChannel.appendLine(`[NLQ] Generated Query: ${generatedQuery}`);
+
+            // Update the document with the generated query
+            const newBlockText = nlq.formatNlqBlock(
+                parsed.nlq!,
+                generatedQuery,
+                parsed.notes
+            );
+
+            // Add :db back if it was in the original
+            let finalBlock = newBlockText;
+            if (dbMatch) {
+                // Insert :db after the opening brace
+                finalBlock = finalBlock.replace('{', `{:db "${dbPath}"\n `);
+            }
+
+            // Replace the old block with the new one
+            const startPos = document.positionAt(nlqBlock.start);
+            const endPos = document.positionAt(nlqBlock.end);
+            const range = new vscode.Range(startPos, endPos);
+
+            await editor.edit(editBuilder => {
+                editBuilder.replace(range, finalBlock);
+            });
+
+            // Run the query if requested
+            if (runAfterGenerate) {
+                // Give the document a moment to update
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // Execute the query
+                const updatedText = editor.document.getText();
+                const updatedBlock = extractNlqBlockAtLine(editor.document, line);
+                if (updatedBlock) {
+                    await executeQuery(context, updatedBlock.text);
+                }
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            outputChannel.appendLine(`NLQ Error: ${message}`);
+            vscode.window.showErrorMessage(`Failed to generate query: ${message}`);
+        }
+    });
+}
+
+/**
+ * Extract an NLQ block (map with :nlq key) at or containing the given line
+ */
+function extractNlqBlockAtLine(
+    document: vscode.TextDocument,
+    line: number
+): { text: string; start: number; end: number } | null {
+    const text = document.getText();
+
+    // Find all NLQ block starts
+    const nlqPattern = /\{[^{}]*:nlq\s+"[^"]+"/g;
+    let match;
+
+    while ((match = nlqPattern.exec(text)) !== null) {
+        const matchStartPos = document.positionAt(match.index);
+
+        // Find the matching closing brace for this block
+        let braceCount = 0;
+        let blockEnd = match.index;
+
+        for (let i = match.index; i < text.length; i++) {
+            if (text[i] === '{') braceCount++;
+            else if (text[i] === '}') {
+                braceCount--;
+                if (braceCount === 0) {
+                    blockEnd = i + 1;
+                    break;
+                }
+            }
+        }
+
+        const matchEndPos = document.positionAt(blockEnd);
+
+        // Check if the given line falls within this block
+        if (line >= matchStartPos.line && line <= matchEndPos.line) {
+            return {
+                text: text.substring(match.index, blockEnd),
+                start: match.index,
+                end: blockEnd
+            };
+        }
+
+        // If we haven't found a match yet and this block starts at or after our line,
+        // use it (for cases where CodeLens is at the start of the block)
+        if (matchStartPos.line >= line) {
+            return {
+                text: text.substring(match.index, blockEnd),
+                start: match.index,
+                end: blockEnd
+            };
+        }
+    }
+
+    return null;
+}
+
 export function deactivate(): void {
     console.log('Levin extension deactivated');
+    nlq.disposeModel();
 }

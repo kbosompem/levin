@@ -11,3 +11,6 @@ node_modules
 .clj-kondo/
 .lsp/
 .levin/
+
+# NLQ model (too large to commit - download separately)
+models/
