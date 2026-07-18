@@ -2,6 +2,8 @@
  * Utility functions for formatting values for display
  */
 
+import { findEntityPositionVars } from './query-highlighter';
+
 export function formatValue(value: unknown): string {
     if (value === null || value === undefined) {
         return 'nil';
@@ -175,6 +177,78 @@ export function parseAttributeParts(attr: string): { namespace: string; name: st
     return { namespace: '', name: cleanAttr };
 }
 
+export interface TreeRow {
+    depth: number;
+    /** Key label for this row (map key or array index); null at the root */
+    key: string | null;
+    /** Scalar text for leaves, a short summary like "{3}" or "[2]" for containers */
+    text: string;
+    /** True when this row has children following at greater depths */
+    container: boolean;
+}
+
+/**
+ * Flatten a nested value (pull results, maps, vectors) into display rows
+ * for a tree view. Lossless - every leaf appears with its full path.
+ */
+export function flattenTree(value: unknown, key: string | null = null, depth: number = 0): TreeRow[] {
+    const isObject = value !== null && typeof value === 'object' && !(value instanceof Date);
+
+    if (!isObject) {
+        return [{ depth, key, text: formatValue(value), container: false }];
+    }
+
+    if (Array.isArray(value)) {
+        if (value.length === 0) {
+            return [{ depth, key, text: '[]', container: false }];
+        }
+        const rows: TreeRow[] = [{ depth, key, text: `[${value.length}]`, container: true }];
+        for (let i = 0; i < value.length; i++) {
+            rows.push(...flattenTree(value[i], String(i), depth + 1));
+        }
+        return rows;
+    }
+
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj);
+    if (keys.length === 0) {
+        return [{ depth, key, text: '{}', container: false }];
+    }
+    const rows: TreeRow[] = [{ depth, key, text: `{${keys.length}}`, container: true }];
+    for (const k of keys) {
+        // parseEdn strips the leading ':' from keywords; show namespaced
+        // keys the way they appeared in the query result
+        const label = k.includes('/') && !k.startsWith(':') ? `:${k}` : k;
+        rows.push(...flattenTree(obj[k], label, depth + 1));
+    }
+    return rows;
+}
+
+/**
+ * Compare two result cells for column sorting: numbers numerically, dates
+ * chronologically, everything else as text; nil always sorts last.
+ */
+export function compareCellValues(a: unknown, b: unknown): number {
+    if (a === null || a === undefined) {
+        return (b === null || b === undefined) ? 0 : 1;
+    }
+    if (b === null || b === undefined) {
+        return -1;
+    }
+
+    if (typeof a === 'number' && typeof b === 'number') {
+        return a - b;
+    }
+
+    if (a instanceof Date && b instanceof Date) {
+        return a.getTime() - b.getTime();
+    }
+
+    const sa = typeof a === 'object' ? toEdn(a) : String(a);
+    const sb = typeof b === 'object' ? toEdn(b) : String(b);
+    return sa.localeCompare(sb);
+}
+
 /**
  * Extract column names from a Datalog :find clause.
  *
@@ -222,19 +296,33 @@ export function extractFindColumns(query: string): string[] {
         return [];
     }
 
-    const findClause = findMatch[1].trim();
-    const columns: string[] = [];
+    return tokenizeFindClause(findMatch[1]).map(t => t.text);
+}
 
-    // Tokenize the find clause, handling nested expressions
+interface FindToken {
+    /** 'var' for bare variables (and '_'), 'expr' for aggregates/pulls */
+    kind: 'var' | 'expr';
+    /** Bare variable for 'var' (?e), formatted expression for 'expr' (count(?e)) */
+    text: string;
+}
+
+/**
+ * Tokenize a :find clause into positional entries. Shared by
+ * extractFindColumns and extractFindVars so the two stay aligned.
+ */
+function tokenizeFindClause(findClause: string): FindToken[] {
+    const tokens: FindToken[] = [];
+    const clause = findClause.trim();
     let i = 0;
-    while (i < findClause.length) {
+
+    while (i < clause.length) {
         // Skip whitespace
-        while (i < findClause.length && /\s/.test(findClause[i])) {
+        while (i < clause.length && /\s/.test(clause[i])) {
             i++;
         }
-        if (i >= findClause.length) break;
+        if (i >= clause.length) { break; }
 
-        const char = findClause[i];
+        const char = clause[i];
 
         // Skip result modifiers: . (scalar) or ... (collection marker)
         if (char === '.') {
@@ -245,12 +333,12 @@ export function extractFindColumns(query: string): string[] {
         // Handle variable: ?name or _
         if (char === '?' || char === '_') {
             let varName = '';
-            while (i < findClause.length && /[a-zA-Z0-9_?-]/.test(findClause[i])) {
-                varName += findClause[i];
+            while (i < clause.length && /[a-zA-Z0-9_?-]/.test(clause[i])) {
+                varName += clause[i];
                 i++;
             }
             if (varName) {
-                columns.push(varName);
+                tokens.push({ kind: 'var', text: varName });
             }
             continue;
         }
@@ -261,16 +349,16 @@ export function extractFindColumns(query: string): string[] {
             let depth = 1;
             i++; // skip opening paren
 
-            while (i < findClause.length && depth > 0) {
-                if (findClause[i] === '(') depth++;
-                else if (findClause[i] === ')') depth--;
+            while (i < clause.length && depth > 0) {
+                if (clause[i] === '(') { depth++; }
+                else if (clause[i] === ')') { depth--; }
                 i++;
             }
 
-            const expr = findClause.slice(startIdx, i).trim();
+            const expr = clause.slice(startIdx, i).trim();
             const formatted = formatFindExpression(expr);
             if (formatted) {
-                columns.push(formatted);
+                tokens.push({ kind: 'expr', text: formatted });
             }
             continue;
         }
@@ -281,17 +369,17 @@ export function extractFindColumns(query: string): string[] {
             i++; // skip opening bracket
             let innerContent = '';
 
-            while (i < findClause.length && depth > 0) {
-                if (findClause[i] === '[') depth++;
-                else if (findClause[i] === ']') depth--;
-                if (depth > 0) innerContent += findClause[i];
+            while (i < clause.length && depth > 0) {
+                if (clause[i] === '[') { depth++; }
+                else if (clause[i] === ']') { depth--; }
+                if (depth > 0) { innerContent += clause[i]; }
                 i++;
             }
 
             // Extract variable from [?e ...]
             const varMatch = innerContent.match(/(\?[a-zA-Z0-9_-]+)/);
             if (varMatch) {
-                columns.push(varMatch[1]);
+                tokens.push({ kind: 'var', text: varMatch[1] });
             }
             continue;
         }
@@ -300,7 +388,37 @@ export function extractFindColumns(query: string): string[] {
         i++;
     }
 
-    return columns;
+    return tokens;
+}
+
+/**
+ * Positional bare variables of the :find clause: element i is the variable
+ * when find entry i is a bare variable (?e), otherwise null (aggregates,
+ * pulls, _). Aligns with extractFindColumns output, including when
+ * :keys/:strs/:syms override the display names.
+ */
+export function extractFindVars(query: string): (string | null)[] {
+    const findMatch = query.match(/:find\s+([\s\S]*?)(?=\s*:where|\s*:in|\s*:keys|\s*:strs|\s*:syms|\s*\]\s*$)/i);
+    if (!findMatch) {
+        return [];
+    }
+    return tokenizeFindClause(findMatch[1]).map(t =>
+        t.kind === 'var' && t.text.startsWith('?') ? t.text : null
+    );
+}
+
+/**
+ * Per-column flags: true when the column is a bare :find variable that
+ * appears in entity position of a :where data pattern - i.e. the column
+ * holds entity ids and may be rendered as entity links.
+ */
+export function computeEntityColumns(query: string): boolean[] {
+    const findVars = extractFindVars(query);
+    if (findVars.length === 0) {
+        return [];
+    }
+    const entityVars = findEntityPositionVars(query);
+    return findVars.map(v => v !== null && entityVars.has(v));
 }
 
 /**

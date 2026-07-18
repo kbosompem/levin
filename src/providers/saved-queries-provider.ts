@@ -10,11 +10,6 @@ interface SavedQuery {
     folder?: string; // Optional folder name for organization
 }
 
-interface QueryFolder {
-    name: string;
-    queries: SavedQuery[];
-}
-
 export class SavedQueriesProvider implements vscode.TreeDataProvider<SavedQueryItem | FolderItem> {
     private _onDidChangeTreeData: vscode.EventEmitter<SavedQueryItem | FolderItem | undefined | null | void> = new vscode.EventEmitter<SavedQueryItem | FolderItem | undefined | null | void>();
     readonly onDidChangeTreeData: vscode.Event<SavedQueryItem | FolderItem | undefined | null | void> = this._onDidChangeTreeData.event;

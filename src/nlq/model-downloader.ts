@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as https from 'https';
 import * as http from 'http';
-import * as os from 'os';
+import { execSync } from 'child_process';
 
 export type InferenceBackend = 'mlx' | 'llama-cpp';
 
@@ -179,9 +179,9 @@ async function downloadFile(
  * Format bytes as human-readable string
  */
 function formatBytes(bytes: number): string {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    if (bytes < 1024) {return bytes + ' B';}
+    if (bytes < 1024 * 1024) {return (bytes / 1024).toFixed(1) + ' KB';}
+    if (bytes < 1024 * 1024 * 1024) {return (bytes / (1024 * 1024)).toFixed(1) + ' MB';}
     return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
 }
 
@@ -204,7 +204,6 @@ export async function downloadModel(context: vscode.ExtensionContext): Promise<v
         cancellable: true
     }, async (progress, token) => {
         const totalFiles = config.files.length;
-        let completedFiles = 0;
 
         for (const fileName of config.files) {
             if (token.isCancellationRequested) {
@@ -216,7 +215,6 @@ export async function downloadModel(context: vscode.ExtensionContext): Promise<v
 
             // Skip if file already exists
             if (fs.existsSync(destPath)) {
-                completedFiles++;
                 continue;
             }
 
@@ -227,7 +225,6 @@ export async function downloadModel(context: vscode.ExtensionContext): Promise<v
 
             try {
                 await downloadFile(url, destPath, (downloaded, total) => {
-                    const pct = Math.round((downloaded / total) * 100);
                     progress.report({
                         message: `${fileName} (${formatBytes(downloaded)} / ${formatBytes(total)})`,
                         increment: 0
@@ -241,7 +238,6 @@ export async function downloadModel(context: vscode.ExtensionContext): Promise<v
                 throw error;
             }
 
-            completedFiles++;
             progress.report({
                 increment: (1 / totalFiles) * 100
             });
@@ -274,7 +270,6 @@ export async function checkPythonDependencies(): Promise<{ installed: boolean; m
 
     for (const pkg of packages) {
         try {
-            const { execSync } = require('child_process');
             const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
             // Try to import the package
             const importName = pkg.replace('-', '_').replace('llama_cpp_python', 'llama_cpp');

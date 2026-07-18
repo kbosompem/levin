@@ -5,6 +5,36 @@ All notable changes to the Levin extension will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-07-17
+
+### Added
+
+- **Sample Playground** - `Levin: Try Sample Playground` builds a seeded Mini-Northwind database (schema, data, rules, vector embeddings) and writes five guided `.dtlv.edn` tutorial files: basics, relationships, rules, vector search, and "beyond SQL"
+- **Get Started walkthrough** - step-by-step onboarding on VS Code's Welcome page, plus welcome views for empty sidebars
+- **Editor diagnostics** - malformed `:where` clauses and unbalanced forms squiggle as you type, before you run
+- **Status bar database pinning** - each query file shows its target database; click to pin a different one (statement `:db` > pin > inherited `:db`)
+- **`:rules` and `:args` statement keys** - run queries with rule inputs (`:in $ %`) and parameterized `:in` bindings directly from query files
+- **Paredit structural editing** - wrap, slurp, barf, raise, splice, and forward/backward s-expression commands with scoped keybindings
+- **Built-in structural formatter** - Format Document now works out of the box (idempotent, comment-preserving); replaces the jsedn-based provider that never loaded
+- **Click-to-sort results** - column headers in the results table sort the fetched rows (numbers numerically, dates chronologically, nil last)
+- **`:order-by` support** - verified and documented: Datalevin sorts in the engine, e.g. `:order-by [?price :desc ?name :asc]`
+- **Editor title buttons** - play/run-all icons on `.dtlv.edn` editors
+
+### Fixed
+
+- **Vector databases failed every query** - Datalevin requires `:vector-opts {:dimensions N}` on *every* `get-conn`; Levin now caches them per database (seeded at creation, persisted across sessions) and asks once when unknown
+- **Vector similarity panel** - corrected the `vec-neighbors` binding shape for dtlv 0.10.x (`[[?e _ _ ?dist]]`)
+- **Pull results displayed as `{3 entries}`** - table cells now render full EDN and the tree view expands nested maps/vectors recursively
+- **Entity links on plain numbers** - prices and other integers no longer link to entities; only columns whose variable sits in entity position (and `:db/id` values) are clickable
+- **Timestamps rendered as `{}`** - `#inst` values now survive into the raw view and EDN export
+- **Multi-statement files** - run the statement at the cursor via `Ctrl+Enter`, per-statement CodeLens, `Ctrl+Shift+Enter` to run all; bare queries inherit the nearest preceding `:db`
+- **Query errors** - failures render inline in the results panel with a friendly summary and the offending clause marked, replacing the separate stack-trace error panel
+
+### Documentation
+
+- New [User Guide](USER_GUIDE.md) - full tour from install to troubleshooting
+- README updated for all of the above
+
 ## [0.6.5] - 2024-12-10
 
 ### Added

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 import * as path from 'path';
 import { parseEdn } from './utils/edn-parser';
+import { formatQueryError } from './utils/error-formatter';
 
 export interface QueryResult {
     success: boolean;
@@ -13,12 +14,16 @@ export interface QueryResult {
 
 export interface SchemaAttribute {
     attribute: string;
-    valueType?: string;
+    valueType?: string;      // now includes 'vec'
     cardinality?: string;
     unique?: string;
     index?: boolean;
     fulltext?: boolean;
     isComponent?: boolean;
+    // Vector fields
+    vectorDimensions?: number;
+    vectorMetricType?: string;
+    vectorDomains?: string[];
 }
 
 export interface DatabaseInfo {
@@ -28,10 +33,40 @@ export interface DatabaseInfo {
     isRemote?: boolean;
 }
 
+export interface CreateDatabaseOptions {
+    schema?: string;              // EDN schema map string
+    autoEntityTime?: boolean;
+    validateData?: boolean;
+    closedSchema?: boolean;
+    vectorOpts?: {
+        dimensions: number;
+        metricType?: string;
+        quantization?: string;
+        connectivity?: number;
+        expansionAdd?: number;
+        expansionSearch?: number;
+    };
+}
+
+export interface VectorOpts {
+    dimensions: number;
+    metricType?: string;
+}
+
 export class DtlvBridge {
     private dtlvPath: string = 'dtlv';
     private openDatabases: Map<string, DatabaseInfo> = new Map();
     private outputChannel?: vscode.OutputChannel;
+
+    /**
+     * Per-database vector opts. Datalevin requires :vector-opts {:dimensions N}
+     * on EVERY get-conn against a database that has :db.type/vec attributes;
+     * they are connection-level and not recoverable from the database itself.
+     */
+    private vectorOptsByDb: Map<string, VectorOpts> = new Map();
+
+    /** Persistence hook, wired by extension.ts to globalState */
+    onVectorOptsChanged?: (dbPath: string, opts: VectorOpts) => void;
 
     // Mutex locks for remote connections to prevent "multiple LMDB connections" error
     private remoteLocks: Map<string, Promise<void>> = new Map();
@@ -148,6 +183,70 @@ export class DtlvBridge {
     }
 
     /**
+     * Remember vector opts for a database (needed on every get-conn).
+     */
+    setVectorOpts(dbPath: string, opts: VectorOpts): void {
+        const resolved = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
+        this.vectorOptsByDb.set(resolved, opts);
+        this.onVectorOptsChanged?.(resolved, opts);
+    }
+
+    getVectorOpts(dbPath: string): VectorOpts | undefined {
+        const resolved = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
+        return this.vectorOptsByDb.get(resolved);
+    }
+
+    /**
+     * Bulk-load persisted vector opts at activation.
+     */
+    loadVectorOpts(entries: Record<string, VectorOpts>): void {
+        for (const [dbPath, opts] of Object.entries(entries)) {
+            if (opts && typeof opts.dimensions === 'number') {
+                this.vectorOptsByDb.set(dbPath, opts);
+            }
+        }
+    }
+
+    /**
+     * Build the get-conn options map, including :vector-opts when known.
+     */
+    private connOpts(resolvedPath: string): string {
+        const vo = this.vectorOptsByDb.get(resolvedPath);
+        if (!vo) {
+            return '{:mapsize 1000}';
+        }
+        const metric = vo.metricType ? ` :metric-type :${vo.metricType}` : '';
+        return `{:mapsize 1000 :vector-opts {:dimensions ${vo.dimensions}${metric}}}`;
+    }
+
+    /**
+     * Ask the user for vector dimensions/metric when a database with vector
+     * attributes is opened without known opts.
+     */
+    private async promptVectorOpts(dbPath: string): Promise<VectorOpts | undefined> {
+        const dimsInput = await vscode.window.showInputBox({
+            prompt: `"${this.extractDatabaseName(dbPath)}" has vector attributes. Enter its vector dimensions to enable queries.`,
+            placeHolder: 'e.g. 8, 384, 768, 1536',
+            validateInput: v => {
+                const n = parseInt(v, 10);
+                return (!isNaN(n) && n > 0 && String(n) === v.trim()) ? null : 'Enter a positive integer';
+            }
+        });
+        if (!dimsInput) {
+            return undefined;
+        }
+        const metric = await vscode.window.showQuickPick(
+            [
+                { label: 'cosine', description: 'most common for embeddings' },
+                { label: 'euclidean' },
+                { label: 'dot' }
+            ],
+            { placeHolder: 'Distance metric used when the index was created' }
+        );
+        return { dimensions: parseInt(dimsInput, 10), metricType: metric?.label ?? 'cosine' };
+    }
+
+    /**
      * Check if a database exists by trying to get its stats
      */
     async databaseExists(dbPath: string): Promise<boolean> {
@@ -159,12 +258,32 @@ export class DtlvBridge {
     /**
      * Create a new database
      */
-    async createDatabase(dbPath: string): Promise<QueryResult> {
+    async createDatabase(dbPath: string, options?: CreateDatabaseOptions): Promise<QueryResult> {
         const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
 
-        // Create by opening connection and closing it
+        // Build schema arg
+        const schemaArg = options?.schema || '{}';
+
+        // Build options map
+        const optParts: string[] = [];
+        if (options?.autoEntityTime) { optParts.push(':auto-entity-time? true'); }
+        if (options?.validateData) { optParts.push(':validate-data? true'); }
+        if (options?.closedSchema) { optParts.push(':closed-schema? true'); }
+        if (options?.vectorOpts) {
+            const vo = options.vectorOpts;
+            const voParts: string[] = [`:dimensions ${vo.dimensions}`];
+            if (vo.metricType) { voParts.push(`:metric-type :${vo.metricType}`); }
+            if (vo.quantization) { voParts.push(`:quantization :${vo.quantization}`); }
+            if (vo.connectivity) { voParts.push(`:connectivity ${vo.connectivity}`); }
+            if (vo.expansionAdd) { voParts.push(`:expansion-add ${vo.expansionAdd}`); }
+            if (vo.expansionSearch) { voParts.push(`:expansion-search ${vo.expansionSearch}`); }
+            optParts.push(`:vector-opts {${voParts.join(' ')}}`);
+        }
+
+        const optsArg = optParts.length > 0 ? `{${optParts.join(' ')}}` : '{}';
+
         const code = `
-            (let [conn (datalevin.core/get-conn "${this.escapeString(resolvedPath)}")]
+            (let [conn (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" ${schemaArg} ${optsArg})]
               (datalevin.core/close conn)
               {:created true :path "${this.escapeString(resolvedPath)}"})
         `.trim();
@@ -173,6 +292,12 @@ export class DtlvBridge {
 
         if (result.success) {
             this.openDatabase(resolvedPath);
+            if (options?.vectorOpts) {
+                this.setVectorOpts(resolvedPath, {
+                    dimensions: options.vectorOpts.dimensions,
+                    metricType: options.vectorOpts.metricType
+                });
+            }
         }
 
         return result;
@@ -186,15 +311,55 @@ export class DtlvBridge {
     }
 
     /**
-     * Execute a query and return parsed results
+     * Execute a query and return parsed results.
+     * Optional inputs support `.dtlv.edn` statement keys:
+     *   :rules ["name" ...] | :all  - stored rule bodies passed as the % input
+     *   :args  [edn ...]            - extra values passed to d/q after @conn, in order
      */
-    async runQuery(dbPath: string, query: string, limit: number = 100): Promise<QueryResult> {
-        const code = `
-            (let [results (datalevin.core/q '${query} @conn)]
+    async runQuery(
+        dbPath: string,
+        query: string,
+        limit: number = 100,
+        inputs?: { rules?: string[] | 'all'; args?: string[] }
+    ): Promise<QueryResult> {
+        const argsEdn = inputs?.args?.length ? ' ' + inputs.args.join(' ') : '';
+        const shape = `
               {:total (count results)
                :truncated (> (count results) ${limit})
-               :results (vec (take ${limit} results))})
+               :results (vec (take ${limit} results))}
         `.trim();
+
+        let code: string;
+        if (inputs?.rules) {
+            const named = inputs.rules !== 'all';
+            const bodiesQuery = named
+                ? `[:find ?body
+                    :in $ [?name ...]
+                    :where
+                    [?e :levin.rule/name ?name]
+                    [?e :levin.rule/body ?body]]`
+                : `[:find ?body
+                    :where
+                    [?e :levin.rule/body ?body]]`;
+            const namesEdn = named
+                ? ' [' + (inputs.rules as string[]).map(n => `"${this.escapeString(n)}"`).join(' ') + ']'
+                : '';
+            code = `
+            (let [rule-bodies (datalevin.core/q '${bodiesQuery} @conn${namesEdn})
+                  rules (->> rule-bodies
+                             (map first)
+                             (map read-string)
+                             (apply concat)
+                             vec)
+                  results (datalevin.core/q '${query} @conn rules${argsEdn})]
+              ${shape})
+            `.trim();
+        } else {
+            code = `
+            (let [results (datalevin.core/q '${query} @conn${argsEdn})]
+              ${shape})
+            `.trim();
+        }
 
         return this.runCode(dbPath, code);
     }
@@ -214,7 +379,8 @@ export class DtlvBridge {
                            :unique (some-> (:db/unique props) name)
                            :index (:db/index props)
                            :fulltext (:db/fulltext props)
-                           :isComponent (:db/isComponent props)}))
+                           :isComponent (:db/isComponent props)
+                           :vectorDomains (some-> (:db.vec/domains props) vec)}))
                    (sort-by :attribute)
                    vec))
         `.trim();
@@ -334,6 +500,7 @@ export class DtlvBridge {
         unique?: string;
         fulltext?: boolean;
         isComponent?: boolean;
+        vectorDomains?: string[];
     }): Promise<QueryResult> {
         let schemaMap = `{:db/ident :${attr.attribute}
                           :db/valueType :db.type/${attr.valueType}
@@ -343,6 +510,10 @@ export class DtlvBridge {
         if (attr.unique) { schemaMap += ` :db/unique :db.unique/${attr.unique}`; }
         if (attr.fulltext) { schemaMap += ' :db/fulltext true'; }
         if (attr.isComponent) { schemaMap += ' :db/isComponent true'; }
+        if (attr.vectorDomains && attr.vectorDomains.length > 0) {
+            const domains = attr.vectorDomains.map(d => `"${d}"`).join(' ');
+            schemaMap += ` :db.vec/domains [${domains}]`;
+        }
 
         schemaMap += '}';
 
@@ -359,7 +530,7 @@ export class DtlvBridge {
 
         // Convert and transact in one step to avoid string escaping issues
         const code = `
-            (let [conn (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" {} {:mapsize 1000})
+            (let [conn (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" {} ${this.connOpts(resolvedPath)})
                   datomic-schema ${schemaEdn}
                   datalevin-schema (->> datomic-schema
                                         (map (fn [[attr props]]
@@ -388,11 +559,11 @@ export class DtlvBridge {
         // Get schema from database, then reopen with it for proper temp ID resolution
         const code = `
             (let [;; Get schema via schema fn
-                  conn1 (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" {} {:mapsize 1000})
+                  conn1 (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" {} ${this.connOpts(resolvedPath)})
                   schema-map (datalevin.core/schema conn1)
                   _ (datalevin.core/close conn1)
                   ;; Reopen with schema for proper temp ID resolution
-                  conn2 (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" schema-map {:mapsize 1000})
+                  conn2 (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" schema-map ${this.connOpts(resolvedPath)})
                   result (datalevin.core/transact! conn2 ${dataEdn})]
               (datalevin.core/close conn2)
               {:tx-id (:max-tx result)
@@ -553,14 +724,36 @@ export class DtlvBridge {
         const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
 
         // Use fully qualified names to avoid shadowing issues in dtlv's sci environment
-        const wrappedCode = `
-            (let [conn (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" {} {:mapsize 1000})]
+        const wrap = (opts: string) => `
+            (let [conn (datalevin.core/get-conn "${this.escapeString(resolvedPath)}" {} ${opts})]
               (try
                 ${code}
                 (finally (datalevin.core/close conn))))
         `.trim();
 
-        return this.execDtlv(wrappedCode);
+        let result = await this.execDtlv(wrap(this.connOpts(resolvedPath)));
+
+        // A database with vector attributes fails every get-conn without
+        // :vector-opts. Ask once, remember, and retry.
+        if (!result.success &&
+            result.error?.includes(':dimensions is required') &&
+            !this.vectorOptsByDb.has(resolvedPath)) {
+            const opts = await this.promptVectorOpts(resolvedPath);
+            if (opts) {
+                this.setVectorOpts(resolvedPath, opts);
+                result = await this.execDtlv(wrap(this.connOpts(resolvedPath)));
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Public wrapper for running code with a database connection
+     * Used by panels that need to execute custom queries
+     */
+    async runCode_public(dbPath: string, code: string): Promise<QueryResult> {
+        return this.runCode(dbPath, code);
     }
 
     /**
@@ -650,7 +843,9 @@ export class DtlvBridge {
                 this.log('\n✓ Success');
                 this.log('Result:\n' + JSON.stringify(result.data, null, 2));
             } else {
-                this.log('\n✗ Error: ' + result.error, true);
+                // Log a one-line summary only - the full stack trace lives in the error panel
+                this.log('\n✗ Error: ' + formatQueryError(result.error || '').summary, true);
+                this.log('  (full error details shown in the Query Error panel)');
 
                 if ((isRemoteConnectionError || isMultipleConnectionError) && retries >= maxRetries) {
                     vscode.window.showErrorMessage(
@@ -871,6 +1066,42 @@ export class DtlvBridge {
               (if (seq rules)
                 (datalevin.core/q query-form db rules)
                 (datalevin.core/q query-form db)))
+        `.trim();
+
+        return this.runCode(dbPath, code);
+    }
+
+    /**
+     * Execute a vector similarity search
+     */
+    async vectorSearch(dbPath: string, attribute: string, queryVector: string, options: {
+        top?: number;
+        display?: string;
+        domains?: string[];
+    } = {}): Promise<QueryResult> {
+        const top = options.top || 10;
+        const displayOpt = options.display === 'refs+dists' ? ':display :refs+dists' : '';
+
+        let searchOpts = `{:top ${top} ${displayOpt}}`;
+
+        let whereClause: string;
+        if (options.domains && options.domains.length > 0) {
+            const domainsList = options.domains.map(d => `"${d}"`).join(' ');
+            searchOpts = `{:top ${top} ${displayOpt} :domains [${domainsList}]}`;
+            whereClause = `[(vec-neighbors $ ?query ${searchOpts}) [[?e ?a ?v]]]`;
+        } else {
+            whereClause = `[(vec-neighbors $ :${attribute} ?query ${searchOpts}) [[?e ?a ?v]]]`;
+        }
+
+        const code = `
+            (let [query-vec ${queryVector}
+                  results (datalevin.core/q '[:find ?e ?a ?v
+                                             :in $ ?query
+                                             :where
+                                             ${whereClause}]
+                                           @conn query-vec)]
+              {:total (count results)
+               :results (vec (take ${top} results))})
         `.trim();
 
         return this.runCode(dbPath, code);

@@ -7,7 +7,37 @@
 
 **Levin** (archaic English for "lightning") is a VS Code extension that provides a visual interface for [Datalevin](https://github.com/juji-io/datalevin) databases. It communicates directly with the `dtlv` CLI, requiring no REPL or Clojure setup.
 
+**New here?** Run **Levin: Try Sample Playground** from the Command Palette - one click builds a seeded demo database with five guided query files that teach every feature. See the [User Guide](USER_GUIDE.md) for the full tour.
+
 ## Features
+
+### Guided Onboarding
+- **Sample Playground** - one command builds a seeded Mini-Northwind database (schema, data, rules, embeddings) plus five guided `.dtlv.edn` tutorial files
+- **Get Started walkthrough** - step-by-step tour on VS Code's Welcome page, deep-linking into every panel
+- **Welcome views** - empty sidebars offer the next action instead of blank space
+
+### Query Editor
+- Dedicated `.dtlv.edn` file support for Datalevin queries
+- **Multiple statements per file** - run the one under the cursor with `Ctrl+Enter`, or the whole file with `Ctrl+Shift+Enter`
+- **`:db` inheritance** - name the database once; later statements reuse it
+- **Parameterized queries** - `:args` feeds values to `:in`; `:rules` loads stored rules for `%`
+- **Live diagnostics** - malformed `:where` clauses and unbalanced forms squiggle as you type
+- **Status bar database pinning** - each file shows and remembers its target database, SQL-tool style
+- Syntax highlighting, autocomplete for schema attributes and query keywords, CodeLens
+- Query history and saved queries
+
+### Results Panel
+- Table view with **click-to-sort column headers** and pagination
+- Tree view for nested data - pull results expand recursively
+- Raw EDN view
+- Export to CSV, JSON, or EDN
+- Entity IDs link to the Entity Inspector (only real entity columns, not every integer)
+- **Friendly error view** - query failures render inline with the offending clause called out, no scary stack-trace page
+
+### Paredit & Formatting
+- Built-in structural formatter (Format Document works out of the box)
+- Paredit commands: wrap, slurp, barf, raise, splice, forward/backward s-expression
+- Brackets auto-close and stay balanced
 
 ### Database Explorer
 - Open local databases via folder picker
@@ -16,20 +46,6 @@
 - View entity counts by namespace
 - Navigate database structure in the sidebar
 - Auto-load recently opened databases
-
-### Query Editor
-- Dedicated `.dtlv.edn` file support for Datalevin queries
-- Syntax highlighting for Datalog queries
-- Autocomplete for schema attributes and query keywords
-- CodeLens for running queries directly from the editor
-- Query history and saved queries
-
-### Results Panel
-- Table view with sorting and pagination
-- Tree view for nested/referenced data
-- Raw EDN view
-- Export to CSV, JSON, or EDN
-- Click entity IDs to inspect
 
 ### Entity Inspector
 - View all attributes of an entity
@@ -44,6 +60,11 @@
 - Stage and preview transactions
 - Execute transact operations
 - Validation before commit
+
+### Rules & Vector Search
+- Store and manage named Datalog rules in the database
+- Vector similarity search panel for `:db.type/vec` attributes
+- `vec-neighbors` works inline in queries, combined with any other clause
 
 ## Installation
 
@@ -129,6 +150,10 @@ If `dtlv` is not in your PATH, you can specify its location in VS Code settings:
 
 ## Quick Start
 
+**Fastest path:** Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`) → **Levin: Try Sample Playground** → pick a folder. Levin builds a seeded Mini-Northwind database and opens `01-basics.dtlv.edn`. Put the cursor in a query and press `Ctrl+Enter`. The Welcome page's "Get started with Levin" walkthrough guides you from there.
+
+**With your own database:**
+
 1. Open the Levin sidebar (lightning bolt icon in the Activity Bar)
 2. Click "Open Database..." or use `Cmd+Alt+L O` (Mac) / `Ctrl+Alt+L O` (Windows/Linux)
 3. Choose "Datalog Database" or "Key-Value Store"
@@ -160,14 +185,24 @@ If `dtlv` is not in your PATH, you can specify its location in VS Code settings:
 
 | Command | Keybinding | Description |
 |---------|------------|-------------|
+| `Levin: Try Sample Playground` | | Build the seeded sample database + tutorial files |
 | `Levin: Open Database` | `Cmd+Alt+L O` | Open an existing database |
 | `Levin: Create Database` | `Cmd+Alt+L C` | Create a new database |
 | `Levin: Close Database` | `Cmd+Alt+L D` | Close a database |
 | `Levin: New Query` | `Cmd+Alt+L Q` | Open new query editor |
-| `Levin: Run Query` | `Ctrl+Enter` | Execute query under cursor |
+| `Levin: Run Query` | `Ctrl+Enter` | Execute the statement under cursor |
+| `Levin: Run All Queries in File` | `Ctrl+Shift+Enter` (`Cmd+Shift+Enter` on macOS) | Execute all statements in the file, in order |
+| `Levin: Pin Database to This File` | | Pin a connection (also: click the status bar item) |
 | `Levin: Inspect Entity` | `Cmd+Alt+L E` | Inspect entity by ID |
 | `Levin: Refresh Explorer` | `Cmd+Alt+L R` | Refresh database tree |
 | `Levin: Export Results` | `Cmd+Alt+L X` | Export current results |
+| `Levin: Paredit Forward/Backward S-Expression` | `Ctrl+Alt+→` / `Ctrl+Alt+←` | Move by form |
+| `Levin: Paredit Slurp/Barf Forward` | `Ctrl+Alt+]` / `Ctrl+Alt+[` | Grow/shrink the enclosing form |
+| `Levin: Paredit Wrap with ( ) / [ ]` | `Ctrl+Alt+W` / `Ctrl+Alt+Shift+W` | Wrap the next form |
+| `Levin: Paredit Raise` | `Ctrl+Alt+R` | Replace parent with this form |
+| `Levin: Paredit Splice` | `Ctrl+Alt+S` | Remove enclosing brackets |
+
+(Paredit keybindings show `Ctrl` — on macOS they are `Cmd`.)
 
 ## Query File Format
 
@@ -193,6 +228,85 @@ Create `.dtlv.edn` files for your queries:
  :limit 50}
 ```
 
+### Multiple Statements per File
+
+A `.dtlv.edn` file can hold as many statements as you like, like a SQL script.
+Each statement gets its own CodeLens buttons, and `Ctrl+Enter` runs only the
+statement under the cursor (when the cursor is between statements, the nearest
+one runs):
+
+```clojure
+;; Set the database once...
+{:db "/path/to/database"}
+
+;; ...then write bare queries below it
+[:find ?e :where [?e :user/name _]]
+
+[:find (count ?e) :where [?e :user/name _]]
+
+;; Or keep each statement self-contained
+{:db "/path/to/database"
+ :query [:find ?n :where [_ :user/name ?n]]
+ :limit 10}
+
+{:db "/path/to/database"
+ :transact [{:user/name "Ada"}]}
+```
+
+- A bare `[:find ...]` query uses the `:db` of the nearest statement above it;
+  if the file has no `:db` anywhere, you are asked to pick a database.
+- `Ctrl+Shift+Enter` runs every statement in the file from top to bottom
+  (stops at the first failure); a `Run All Queries` CodeLens also appears at
+  the top of files with more than one statement.
+
+### Statement Keys
+
+| Key | Meaning |
+|-----|---------|
+| `:db` | Database path or `dtlv://` URI. Only needed once - later statements inherit it (a status-bar pin overrides inheritance) |
+| `:query` | The Datalog query vector |
+| `:transact` | Transaction data to write (instead of `:query`) |
+| `:limit` | Max rows returned (default 50) |
+| `:rules` | Stored rule names to load for `%`, e.g. `["reports-to"]`, or `:all` |
+| `:args` | Extra values for the `:in` clause, in order |
+
+### Parameterized queries and rules
+
+```clojure
+;; :args feeds the :in clause - no string concatenation
+{:query [:find ?date
+         :in $ ?company
+         :where
+         [?o :order/customer ?c]
+         [?o :order/order-date ?date]
+         [?c :customer/company-name ?company]]
+ :args ["La maison d'Asie"]}
+
+;; :rules loads stored rules for the % input
+{:query [:find ?fname
+         :in $ %
+         :where
+         [?boss :employee/first-name "Andrew"]
+         (reports-to ?e ?boss)
+         [?e :employee/first-name ?fname]]
+ :rules ["reports-to"]}
+```
+
+### Sorting
+
+Datalevin supports `:order-by` directly in queries (Datomic does not!):
+
+```clojure
+[:find ?name ?price
+ :where
+ [?p :product/name ?name]
+ [?p :product/unit-price ?price]
+ :order-by [?price :desc ?name :asc]]
+```
+
+You can also click any column header in the results panel to sort the
+fetched rows.
+
 ## Configuration
 
 ```json
@@ -213,23 +327,30 @@ Create `.dtlv.edn` files for your queries:
 
 ### Formatting .dtlv.edn Files
 
-For formatting query files, install the [cljfmt extension](https://marketplace.visualstudio.com/items?itemName=pedrorgirardi.cljfmt):
+Levin ships a built-in structural formatter - no extra extension needed.
+**Format Document** (`Shift+Alt+F`) reindents the file canonically:
 
-1. Install the `cljfmt` extension by pedrorgirardi
-2. Add to your `settings.json`:
-   ```json
-   {
-     "files.associations": {
-       "*.dtlv.edn": "clojure"
-     },
-     "[clojure]": {
-       "editor.defaultFormatter": "pedrorgirardi.cljfmt",
-       "editor.formatOnSave": true
-     }
-   }
-   ```
+```clojure
+{:db "/tmp/shop"
+ :query [:find ?name ?price
+         :where
+         [?p :product/name ?name]
+         [?p :product/unit-price ?price]]
+ :limit 50}
+```
 
-**Note**: This changes `.dtlv.edn` files to Clojure mode, which removes the CodeLens "Run Query" button. You can still run queries with `Ctrl+Enter` or the Command Palette.
+Formatting is idempotent and preserves your comments. To format on save:
+
+```json
+{
+  "[datalevin-query]": {
+    "editor.formatOnSave": true
+  }
+}
+```
+
+The paredit commands (see Commands table) keep structure intact while you
+edit; brackets also auto-close via the language configuration.
 
 ## Development
 

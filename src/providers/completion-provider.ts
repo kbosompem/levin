@@ -57,6 +57,7 @@ export class QueryCompletionProvider implements vscode.CompletionItemProvider {
             { name: 'with', detail: 'Include extra variables', snippet: 'with $0' },
             { name: 'db/id', detail: 'Entity ID attribute', snippet: 'db/id' },
             { name: 'db/ident', detail: 'Ident attribute', snippet: 'db/ident' },
+            { name: 'vec-neighbors', detail: 'Vector similarity search function', snippet: 'vec-neighbors' },
         ];
 
         return keywords.map(kw => {
@@ -142,6 +143,16 @@ export class QueryCompletionProvider implements vscode.CompletionItemProvider {
                 name: 'Parameterized',
                 snippet: ':find ?e\n        :in $ ?${1:param}\n        :where\n        [?e :${2:attr} ?${1:param}]$0',
                 detail: 'Query with input parameter'
+            },
+            {
+                name: 'Vector search',
+                snippet: ':find ?e\n        :in $ ?query\n        :where\n        [(vec-neighbors $ :${1:embedding} ?query {:top ${2:10}}) [[?e ?a ?v]]]$0',
+                detail: 'Vector similarity search'
+            },
+            {
+                name: 'Vector search with scores',
+                snippet: ':find ?e ?score\n        :in $ ?query\n        :where\n        [(vec-neighbors $ :${1:embedding} ?query {:top ${2:10} :display :refs+dists}) [[?e _ _ ?score]]]$0',
+                detail: 'Vector search with similarity scores'
             }
         ];
 

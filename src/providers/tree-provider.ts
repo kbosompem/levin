@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { DtlvBridge, SchemaAttribute } from '../dtlv-bridge';
 
-export type TreeItemType = 'database' | 'db-folder' | 'schema-folder' | 'schema-item' | 'entities-folder' | 'entity-namespace' | 'relationships-folder' | 'rules-folder' | 'kv-store-folder' | 'queries-folder' | 'query-node' | 'transact-node' | 'open-database';
+export type TreeItemType = 'database' | 'db-folder' | 'schema-folder' | 'schema-item' | 'entities-folder' | 'entity-namespace' | 'relationships-folder' | 'rules-folder' | 'kv-store-folder' | 'queries-folder' | 'query-node' | 'transact-node' | 'vector-search-node' | 'open-database';
 
 export interface DatabaseFolder {
     name: string;
@@ -44,7 +44,11 @@ export class DatabaseTreeItem extends vscode.TreeItem {
                 this.iconPath = new vscode.ThemeIcon('symbol-structure');
                 break;
             case 'schema-item':
-                this.iconPath = new vscode.ThemeIcon('symbol-field');
+                if (this.data && (this.data as SchemaAttribute).valueType === 'vec') {
+                    this.iconPath = new vscode.ThemeIcon('symbol-array');
+                } else {
+                    this.iconPath = new vscode.ThemeIcon('symbol-field');
+                }
                 break;
             case 'entities-folder':
                 this.iconPath = new vscode.ThemeIcon('symbol-class');
@@ -63,6 +67,9 @@ export class DatabaseTreeItem extends vscode.TreeItem {
                 break;
             case 'transact-node':
                 this.iconPath = new vscode.ThemeIcon('edit');
+                break;
+            case 'vector-search-node':
+                this.iconPath = new vscode.ThemeIcon('symbol-array');
                 break;
             case 'queries-folder':
                 this.iconPath = new vscode.ThemeIcon('search');
@@ -83,6 +90,9 @@ export class DatabaseTreeItem extends vscode.TreeItem {
             if (attr.index) { parts.push('indexed'); }
             if (attr.unique) { parts.push(attr.unique); }
             if (attr.fulltext) { parts.push('fulltext'); }
+            if (attr.vectorDomains && attr.vectorDomains.length > 0) {
+                parts.push(`domains: ${attr.vectorDomains.join(', ')}`);
+            }
             this.tooltip = parts.join(', ');
             this.description = parts.join(', ');
         } else if (this.itemType === 'entity-namespace' && this.data) {
@@ -251,10 +261,11 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
         switch (itemType) {
             case 'database':
                 return this.getDatabaseChildren(dbPath);
-            case 'db-folder':
+            case 'db-folder': {
                 // Return databases in this folder
                 const folderData = element.data as DatabaseFolder;
                 return this.getDatabasesInFolder(folderData);
+            }
             case 'schema-folder':
                 return this.getSchemaItems(dbPath);
             case 'entities-folder':
@@ -286,7 +297,7 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
     }
 
     private extractDbPathFromId(id?: string): string | undefined {
-        if (!id) return undefined;
+        if (!id) {return undefined;}
         // ID format: "itemType:dbPath"
         const colonIndex = id.indexOf(':');
         if (colonIndex > 0) {
@@ -457,6 +468,20 @@ export class DatabaseTreeProvider implements vscode.TreeDataProvider<DatabaseTre
             arguments: [rulesItem]
         };
         items.push(this.registerItem(rulesItem));
+
+        // Vector Search - clicking opens Vector Search panel
+        const vectorSearchItem = new DatabaseTreeItem(
+            'Vector Search',
+            vscode.TreeItemCollapsibleState.None,
+            'vector-search-node',
+            dbPath
+        );
+        vectorSearchItem.command = {
+            command: 'levin.vectorSearch',
+            title: 'Vector Similarity Search',
+            arguments: [vectorSearchItem]
+        };
+        items.push(this.registerItem(vectorSearchItem));
 
         // Key-Value Store - clicking opens KV Store panel
         const kvStoreItem = new DatabaseTreeItem(

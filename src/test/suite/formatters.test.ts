@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { formatValue, truncate, toEdn, parseAttributeParts, extractFindColumns } from '../../utils/formatters';
+import { formatValue, truncate, toEdn, parseAttributeParts, extractFindColumns, extractFindVars, computeEntityColumns, flattenTree, compareCellValues } from '../../utils/formatters';
 
 suite('Formatters Test Suite', () => {
     suite('formatValue', () => {
@@ -72,6 +72,16 @@ suite('Formatters Test Suite', () => {
         test('Should convert booleans', () => {
             assert.strictEqual(toEdn(true), 'true');
             assert.strictEqual(toEdn(false), 'false');
+        });
+
+        test('Should convert dates to #inst literals (not empty maps)', () => {
+            const result = toEdn(new Date('2024-01-15T10:30:00.000Z'));
+            assert.strictEqual(result, '#inst "2024-01-15T10:30:00.000Z"');
+        });
+
+        test('Should preserve dates inside result tuples', () => {
+            const result = toEdn([[new Date('2024-01-15T10:30:00.000Z')]]);
+            assert.strictEqual(result, '[[#inst "2024-01-15T10:30:00.000Z"]]');
         });
 
         test('Should convert arrays to vectors', () => {
@@ -185,6 +195,145 @@ suite('Formatters Test Suite', () => {
             const query = '[:find ?e ?name :strs id name :where [?e :user/name ?name]]';
             const columns = extractFindColumns(query);
             assert.deepStrictEqual(columns, ['id', 'name']);
+        });
+    });
+
+    suite('extractFindVars', () => {
+        test('Bare variables are kept, aggregates and pulls become null', () => {
+            const vars = extractFindVars(
+                '[:find ?e (count ?x) (pull ?p [:name]) ?name :where [?e :a ?name]]'
+            );
+            assert.deepStrictEqual(vars, ['?e', null, null, '?name']);
+        });
+
+        test('Collection and scalar forms unwrap to their variable', () => {
+            assert.deepStrictEqual(extractFindVars('[:find [?e ...] :where [?e :a _]]'), ['?e']);
+            assert.deepStrictEqual(extractFindVars('[:find ?e . :where [?e :a _]]'), ['?e']);
+        });
+
+        test('Aligns with extractFindColumns when :keys overrides names', () => {
+            const query = '[:find ?e ?name :keys id name :where [?e :user/name ?name]]';
+            const vars = extractFindVars(query);
+            assert.deepStrictEqual(vars, ['?e', '?name']);
+            assert.strictEqual(vars.length, extractFindColumns(query).length);
+        });
+
+        test('Invalid query returns empty', () => {
+            assert.deepStrictEqual(extractFindVars('{:db "/x"}'), []);
+        });
+    });
+
+    suite('computeEntityColumns', () => {
+        test('Only variables in entity position are entity columns', () => {
+            const flags = computeEntityColumns(
+                '[:find ?e ?name ?price :where [?e :user/name ?name] [?e :user/price ?price]]'
+            );
+            assert.deepStrictEqual(flags, [true, false, false]);
+        });
+
+        test('Value-position variables are not entity columns (the price bug)', () => {
+            const flags = computeEntityColumns(
+                '[:find ?name ?price :where [?p :product/name ?name] [?p :product/unit-price ?price]]'
+            );
+            assert.deepStrictEqual(flags, [false, false]);
+        });
+
+        test('Aggregates are never entity columns', () => {
+            const flags = computeEntityColumns(
+                '[:find ?cat (count ?e) :where [?e :product/category ?cat]]'
+            );
+            assert.deepStrictEqual(flags, [false, false]);
+        });
+
+        test('Works with :keys overrides', () => {
+            const flags = computeEntityColumns(
+                '[:find ?e ?name :keys id name :where [?e :user/name ?name]]'
+            );
+            assert.deepStrictEqual(flags, [true, false]);
+        });
+
+        test('Non-query text yields no columns', () => {
+            assert.deepStrictEqual(computeEntityColumns('[[:db/add 1 :a "b"]]'), []);
+        });
+    });
+
+    suite('flattenTree', () => {
+        test('Scalars produce a single leaf row', () => {
+            assert.deepStrictEqual(flattenTree(18.0, '?price', 0), [
+                { depth: 0, key: '?price', text: '18', container: false }
+            ]);
+            assert.deepStrictEqual(flattenTree('Chai', null, 0), [
+                { depth: 0, key: null, text: '"Chai"', container: false }
+            ]);
+        });
+
+        test('Pull maps expand recursively with namespaced keys re-colonized', () => {
+            const pull = {
+                'order/order-date': '2024-01-15',
+                'order/customer': { 'customer/company-name': 'Around the Horn' }
+            };
+            const rows = flattenTree(pull, 'pull(?o)', 1);
+            assert.deepStrictEqual(rows, [
+                { depth: 1, key: 'pull(?o)', text: '{2}', container: true },
+                { depth: 2, key: ':order/order-date', text: '"2024-01-15"', container: false },
+                { depth: 2, key: ':order/customer', text: '{1}', container: true },
+                { depth: 3, key: ':customer/company-name', text: '"Around the Horn"', container: false }
+            ]);
+        });
+
+        test('Vectors expand with index keys; nested containers nest', () => {
+            const rows = flattenTree([{ a: 1 }, 2], null, 0);
+            assert.deepStrictEqual(rows, [
+                { depth: 0, key: null, text: '[2]', container: true },
+                { depth: 1, key: '0', text: '{1}', container: true },
+                { depth: 2, key: 'a', text: '1', container: false },
+                { depth: 1, key: '1', text: '2', container: false }
+            ]);
+        });
+
+        test('Empty containers are leaves', () => {
+            assert.deepStrictEqual(flattenTree([], 'k', 0), [
+                { depth: 0, key: 'k', text: '[]', container: false }
+            ]);
+            assert.deepStrictEqual(flattenTree({}, 'k', 0), [
+                { depth: 0, key: 'k', text: '{}', container: false }
+            ]);
+        });
+    });
+
+    suite('compareCellValues', () => {
+        test('Numbers compare numerically, not lexically', () => {
+            assert.ok(compareCellValues(4.5, 18) < 0);
+            assert.ok(compareCellValues(18, 4.5) > 0);
+            assert.strictEqual(compareCellValues(18, 18), 0);
+        });
+
+        test('Dates compare chronologically', () => {
+            const earlier = new Date('2024-01-15');
+            const later = new Date('2024-03-10');
+            assert.ok(compareCellValues(earlier, later) < 0);
+            assert.ok(compareCellValues(later, earlier) > 0);
+        });
+
+        test('Strings compare alphabetically', () => {
+            assert.ok(compareCellValues('Chai', 'Tofu') < 0);
+        });
+
+        test('nil always sorts last, regardless of direction', () => {
+            assert.ok(compareCellValues(null, 5) > 0);
+            assert.ok(compareCellValues(5, null) < 0);
+            assert.strictEqual(compareCellValues(null, undefined), 0);
+        });
+
+        test('Nested values compare by their EDN text', () => {
+            assert.ok(compareCellValues({ a: 1 }, { a: 2 }) < 0);
+            assert.ok(compareCellValues([1, 2], [1, 3]) < 0);
+        });
+
+        test('A column of prices sorts in price order', () => {
+            const prices = [30.0, 10.0, 19.0, 18.0, 23.25];
+            const sorted = [...prices].sort(compareCellValues);
+            assert.deepStrictEqual(sorted, [10.0, 18.0, 19.0, 23.25, 30.0]);
         });
     });
 });

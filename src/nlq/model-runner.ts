@@ -174,14 +174,14 @@ function extractQueryVector(output: string): string {
     // If the model returned just the vector, fast path
     if (text.startsWith('[')) {
         const vec = sliceBalancedVector(text);
-        if (vec) return vec;
+        if (vec) {return vec;}
     }
 
     // Look for the first vector anywhere in the text
     const idx = text.indexOf('[');
     if (idx !== -1) {
         const vec = sliceBalancedVector(text.slice(idx));
-        if (vec) return vec;
+        if (vec) {return vec;}
     }
 
     // Try to salvage from a :find without opening bracket
@@ -193,7 +193,7 @@ function extractQueryVector(output: string): string {
         const candidate = stop !== -1 ? tail.slice(0, stop).trim() : tail.trim();
         const wrapped = `[${candidate.replace(/^:+query\s*/i, '').trim()}]`;
         const vec = sliceBalancedVector(wrapped);
-        if (vec) return vec;
+        if (vec) {return vec;}
     }
 
     throw new Error('Model did not return a valid EDN query vector');

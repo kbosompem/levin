@@ -151,6 +151,11 @@ export class SchemaEditor {
             if (attr.isComponent) {
                 props.push(':db/isComponent true');
             }
+            // Note: vector domains aren't in the standard Datomic format, so we add them as a custom property
+            if (attr.vectorDomains && attr.vectorDomains.length > 0) {
+                const domains = attr.vectorDomains.map(d => `"${d}"`).join(' ');
+                props.push(`:db.vec/domains [${domains}]`);
+            }
 
             const propsStr = props.length > 0 ? `{${props.join('\n                ')} :db.install/_attribute :db.part/db}` : '{}';
             const comma = index < schema.length - 1 ? '' : '';
@@ -195,7 +200,8 @@ export class SchemaEditor {
             index: attr.index,
             unique: attr.unique || undefined,
             fulltext: attr.fulltext,
-            isComponent: attr.isComponent
+            isComponent: attr.isComponent,
+            vectorDomains: attr.vectorDomains
         });
 
         if (result.success) {
@@ -373,7 +379,7 @@ export class SchemaEditor {
         <div class="form-row">
             <div class="form-group">
                 <label>Value Type</label>
-                <select id="valueType">
+                <select id="valueType" onchange="onValueTypeChange()">
                     <option value="string">string</option>
                     <option value="long">long</option>
                     <option value="double">double</option>
@@ -382,6 +388,7 @@ export class SchemaEditor {
                     <option value="uuid">uuid</option>
                     <option value="ref">ref</option>
                     <option value="bytes">bytes</option>
+                    <option value="vec">vec (vector)</option>
                 </select>
             </div>
             <div class="form-group">
@@ -401,6 +408,19 @@ export class SchemaEditor {
                 <label><input type="checkbox" id="fulltext" /> Fulltext</label>
                 <label><input type="checkbox" id="isComponent" /> Is Component</label>
             </div>
+        </div>
+
+        <div id="vectorConfig" style="display: none; margin-top: 12px; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px;">
+            <h4 style="margin: 0 0 8px 0;">Vector Configuration</h4>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Vector Domains (comma-separated, optional)</label>
+                    <input type="text" id="vectorDomains" placeholder="e.g. embeddings, images" />
+                </div>
+            </div>
+            <p style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 8px;">
+                Note: Vector dimensions and metric type are configured at database connection level via :vector-opts when creating the database.
+            </p>
         </div>
 
         <div class="form-row">
@@ -449,15 +469,31 @@ export class SchemaEditor {
                             ${attr.index ? '<span class="tag">indexed</span>' : ''}
                             ${attr.fulltext ? '<span class="tag">fulltext</span>' : ''}
                             ${attr.isComponent ? '<span class="tag">component</span>' : ''}
+                            ${attr.valueType === 'vec' ? '<span class="tag" style="background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);">vector</span>' : ''}
                         </td>
                     </tr>
-                `}).join('')}
+                `;}).join('')}
             </tbody>
         </table>
     </div>
 
     <script>
         const vscode = acquireVsCodeApi();
+
+        function onValueTypeChange() {
+            const valueType = document.getElementById('valueType').value;
+            document.getElementById('vectorConfig').style.display = valueType === 'vec' ? 'block' : 'none';
+            // Disable irrelevant options for vec type
+            if (valueType === 'vec') {
+                document.getElementById('fulltext').checked = false;
+                document.getElementById('fulltext').disabled = true;
+                document.getElementById('isComponent').checked = false;
+                document.getElementById('isComponent').disabled = true;
+            } else {
+                document.getElementById('fulltext').disabled = false;
+                document.getElementById('isComponent').disabled = false;
+            }
+        }
 
         function addAttribute() {
             const namespace = document.getElementById('namespace').value.trim();
@@ -479,9 +515,19 @@ export class SchemaEditor {
             if (uniqueIdentity) { unique = 'identity'; }
             else if (uniqueValue) { unique = 'value'; }
 
+            const msg = { namespace, name, valueType, cardinality, index, unique, fulltext, isComponent };
+
+            // Add vector domains if vec type
+            if (valueType === 'vec') {
+                const domainsInput = document.getElementById('vectorDomains').value.trim();
+                if (domainsInput) {
+                    msg.vectorDomains = domainsInput.split(',').map(d => d.trim()).filter(d => d);
+                }
+            }
+
             vscode.postMessage({
                 command: 'addAttribute',
-                attribute: { namespace, name, valueType, cardinality, index, unique, fulltext, isComponent }
+                attribute: msg
             });
 
             document.getElementById('namespace').value = '';
@@ -491,6 +537,9 @@ export class SchemaEditor {
             document.getElementById('unique-identity').checked = false;
             document.getElementById('fulltext').checked = false;
             document.getElementById('isComponent').checked = false;
+            document.getElementById('vectorDomains').value = '';
+            document.getElementById('vectorConfig').style.display = 'none';
+            document.getElementById('valueType').value = 'string';
         }
 
         function filterAttributes() {
@@ -540,4 +589,5 @@ interface NewAttribute {
     unique: string | null;
     fulltext: boolean;
     isComponent: boolean;
+    vectorDomains?: string[];
 }

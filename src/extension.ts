@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
-import { DtlvBridge } from './dtlv-bridge';
+import * as os from 'os';
+import * as path from 'path';
+import { DtlvBridge, VectorOpts } from './dtlv-bridge';
 import { DatabaseTreeProvider, DatabaseTreeItem } from './providers/tree-provider';
 import { QueryCompletionProvider } from './providers/completion-provider';
 import { QueryCodeLensProvider } from './providers/codelens-provider';
@@ -11,10 +13,20 @@ import { TransactionPanel } from './views/transaction-panel';
 import { EntityBrowser } from './views/entity-browser';
 import { RelationshipsPanel } from './views/relationships-panel';
 import { RulesPanel } from './views/rules-panel';
-import { ErrorPanel } from './views/error-panel';
 import { KvStorePanel } from './views/kv-store-panel';
+import { VectorSearchPanel } from './views/vector-search-panel';
+import { CreateDatabasePanel } from './views/create-database-panel';
 import { QueryHistoryProvider } from './providers/query-history-provider';
 import { SavedQueriesProvider } from './providers/saved-queries-provider';
+import { registerDiagnostics } from './providers/diagnostics-provider';
+import { ConnectionStatusProvider } from './providers/connection-status';
+import { registerPareditCommands } from './providers/paredit-commands';
+import { DatalevinQueryFormattingProvider } from './providers/format-provider';
+import { buildSampleDatabase } from './sample/sample-database';
+import { playgroundFiles } from './sample/playground-files';
+import { SAMPLE_DB_DIRNAME } from './sample/northwind-mini';
+import { parseStatements, statementAtLine, resolveDbPath, isRunnable, parseRulesSpec, splitEdnVector, QueryStatement } from './utils/query-statements';
+import { formatQueryError } from './utils/error-formatter';
 import * as nlq from './nlq';
 
 let dtlvBridge: DtlvBridge;
@@ -28,8 +40,10 @@ let transactionPanel: TransactionPanel | undefined;
 let entityBrowser: EntityBrowser | undefined;
 let relationshipsPanel: RelationshipsPanel | undefined;
 let rulesPanel: RulesPanel | undefined;
-let errorPanel: ErrorPanel | undefined;
 let kvStorePanel: KvStorePanel | undefined;
+let vectorSearchPanel: VectorSearchPanel | undefined;
+let createDatabasePanel: CreateDatabasePanel | undefined;
+let connectionStatus: ConnectionStatusProvider | undefined;
 let outputChannel: vscode.OutputChannel;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -46,6 +60,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         // Initialize dtlv bridge
         dtlvBridge = new DtlvBridge(outputChannel);
+
+        // Restore per-database vector opts (required to open vector DBs)
+        dtlvBridge.loadVectorOpts(context.globalState.get<Record<string, VectorOpts>>('levin.vectorOpts', {}));
+        dtlvBridge.onVectorOptsChanged = (dbPath, opts) => {
+            const all = context.globalState.get<Record<string, VectorOpts>>('levin.vectorOpts', {});
+            all[dbPath] = opts;
+            void context.globalState.update('levin.vectorOpts', all);
+        };
 
         // Check if dtlv is installed
         const dtlvInstalled = await dtlvBridge.checkDtlvInstalled();
@@ -102,9 +124,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         )
     );
 
+    context.subscriptions.push(
+        vscode.languages.registerDocumentFormattingEditProvider(
+            selector,
+            new DatalevinQueryFormattingProvider()
+        )
+    );
+
 
     // Register commands
     registerCommands(context);
+    registerPareditCommands(context);
+
+    // Live query diagnostics (squiggles) + status-bar database pinning
+    registerDiagnostics(context);
+    connectionStatus = new ConnectionStatusProvider(context, dtlvBridge);
+    context.subscriptions.push(connectionStatus);
 
     // Load recently opened databases
     loadRecentDatabases(context);
@@ -235,7 +270,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
         })
     );
 
-    // Create Database command
+    // Create Database command - opens the wizard panel
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.createDatabase', async () => {
             // First check if dtlv is installed
@@ -245,45 +280,41 @@ function registerCommands(context: vscode.ExtensionContext): void {
                 return;
             }
 
-            const options: vscode.OpenDialogOptions = {
-                canSelectFiles: false,
-                canSelectFolders: true,
-                canSelectMany: false,
-                openLabel: 'Select Parent Folder',
-                title: 'Select folder to create database in'
-            };
-
-            const result = await vscode.window.showOpenDialog(options);
-
-            if (result && result[0]) {
-                const parentPath = result[0].fsPath;
-
-                const dbName = await vscode.window.showInputBox({
-                    prompt: 'Enter database name',
-                    placeHolder: 'my-database',
-                    validateInput: (value) => {
-                        if (!value || value.trim().length === 0) {
-                            return 'Database name is required';
-                        }
-                        if (/[<>:"/\\|?*]/.test(value)) {
-                            return 'Invalid characters in database name';
-                        }
-                        return null;
-                    }
+            if (!createDatabasePanel) {
+                createDatabasePanel = new CreateDatabasePanel(context, dtlvBridge, (dbPath: string) => {
+                    openDatabase(context, dbPath);
                 });
-
-                if (dbName) {
-                    const dbPath = `${parentPath}/${dbName}`;
-                    const createResult = await dtlvBridge.createDatabase(dbPath);
-
-                    if (createResult.success) {
-                        openDatabase(context, dbPath);
-                        vscode.window.showInformationMessage(`Created database: ${dbName}`);
-                    } else {
-                        vscode.window.showErrorMessage(`Failed to create database: ${createResult.error}`);
-                    }
-                }
             }
+            createDatabasePanel.show();
+        })
+    );
+
+    // Vector Search command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.vectorSearch', async (item?: DatabaseTreeItem) => {
+            const dbPath = item?.dbPath || await selectDatabase();
+            if (!dbPath) { return; }
+
+            if (!vectorSearchPanel) {
+                vectorSearchPanel = new VectorSearchPanel(context, dtlvBridge);
+            }
+            vectorSearchPanel.show(dbPath);
+        })
+    );
+
+    // Try Sample Playground command - builds the Mini-Northwind sample DB
+    // and drops numbered playground query files next to it
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.trySampleDatabase', async () => {
+            if (!await ensureDtlv()) { return; }
+            await trySampleDatabase(context);
+        })
+    );
+
+    // Pin a database to the active query file (status bar click)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.pinDatabase', async () => {
+            await connectionStatus?.pinDatabase();
         })
     );
 
@@ -336,7 +367,14 @@ function registerCommands(context: vscode.ExtensionContext): void {
     // Run Query command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.runQuery', async () => {
-            await runCurrentQuery(context);
+            await runCurrentQuery();
+        })
+    );
+
+    // Run All Queries command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.runAllQueries', async () => {
+            await runAllQueries();
         })
     );
 
@@ -477,10 +515,19 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
     // Save Query command
     context.subscriptions.push(
-        vscode.commands.registerCommand('levin.saveQuery', async () => {
+        vscode.commands.registerCommand('levin.saveQuery', async (line?: number) => {
             const editor = vscode.window.activeTextEditor;
             if (editor && editor.document.languageId === 'datalevin-query') {
-                const queryText = editor.document.getText();
+                // When invoked from a CodeLens, save just that statement;
+                // otherwise save the whole document
+                let queryText = editor.document.getText();
+                if (line !== undefined) {
+                    const statements = parseStatements(queryText);
+                    const stmt = statementAtLine(statements.filter(s => s.kind !== 'other'), line);
+                    if (stmt) {
+                        queryText = stmt.text;
+                    }
+                }
                 const name = await vscode.window.showInputBox({
                     prompt: 'Enter a name for this query',
                     placeHolder: 'My Query'
@@ -573,18 +620,19 @@ function registerCommands(context: vscode.ExtensionContext): void {
 
     // Copy Query as Clojure
     context.subscriptions.push(
-        vscode.commands.registerCommand('levin.copyQueryAsClojure', async (_line?: number) => {
+        vscode.commands.registerCommand('levin.copyQueryAsClojure', async (line?: number) => {
             const editor = vscode.window.activeTextEditor;
             if (!editor) { return; }
 
-            const queryText = editor.document.getText();
+            const text = editor.document.getText();
+            const statements = parseStatements(text);
+            const stmt = line !== undefined
+                ? statementAtLine(statements, line)
+                : statements.find(s => isRunnable(s)) ?? null;
 
-            // Parse the query to extract components
-            const dbMatch = queryText.match(/:db\s+"([^"]+)"/);
-            const dbPath = dbMatch?.[1] || '/path/to/database';
-
-            const queryPortionMatch = queryText.match(/:query\s+(\[[\s\S]*?\])(?=\s*:|\s*\})/);
-            const queryPortion = queryPortionMatch?.[1] || '[:find ?e :where [?e :db/id _]]';
+            // Parse the statement to extract components
+            const dbPath = (stmt && resolveDbPath(statements, stmt)) || '/path/to/database';
+            const queryPortion = stmt?.queryText || '[:find ?e :where [?e :db/id _]]';
 
             // Generate Clojure code
             const clojureCode = `(require '[datalevin.core :as d])
@@ -922,6 +970,110 @@ function openDatabase(context: vscode.ExtensionContext, dbPath: string): void {
     databaseTreeProvider.refresh();
 }
 
+/**
+ * Build the Mini-Northwind sample playground: seeded database + numbered
+ * .dtlv.edn tutorial files, then open the first one.
+ */
+async function trySampleDatabase(context: vscode.ExtensionContext): Promise<void> {
+    // 1. Where should the playground live?
+    interface LocationPick extends vscode.QuickPickItem { fsPath?: string }
+    const workspaceFolders = vscode.workspace.workspaceFolders?.map(f => f.uri.fsPath) ?? [];
+    const defaultDir = path.join(os.homedir(), 'levin-playground');
+    const picks: LocationPick[] = [
+        ...workspaceFolders.map(f => ({
+            label: `$(folder) ${path.basename(f)}`,
+            description: 'workspace folder',
+            fsPath: f
+        })),
+        { label: '$(home) ~/levin-playground', description: defaultDir, fsPath: defaultDir },
+        { label: '$(folder-opened) Browse…', description: 'choose a folder' }
+    ];
+    const picked = await vscode.window.showQuickPick(picks, {
+        placeHolder: 'Where should the sample playground live?'
+    });
+    if (!picked) { return; }
+
+    let root = picked.fsPath;
+    if (!root) {
+        const chosen = await vscode.window.showOpenDialog({
+            canSelectFolders: true,
+            canSelectFiles: false,
+            canSelectMany: false,
+            openLabel: 'Choose playground folder'
+        });
+        if (!chosen || chosen.length === 0) { return; }
+        root = chosen[0].fsPath;
+    }
+
+    const dbPath = path.join(root, SAMPLE_DB_DIRNAME);
+    const dbUri = vscode.Uri.file(dbPath);
+
+    // 2. Existing sample database?
+    let exists = false;
+    try {
+        await vscode.workspace.fs.stat(dbUri);
+        exists = true;
+    } catch {
+        exists = false;
+    }
+
+    let shouldBuild = true;
+    if (exists) {
+        const choice = await vscode.window.showQuickPick(
+            [
+                { label: 'Open existing', description: 'keep the current sample data', build: false },
+                { label: 'Recreate', description: 'delete and rebuild the sample database', build: true }
+            ],
+            { placeHolder: `A sample database already exists at ${dbPath}` }
+        );
+        if (!choice) { return; }
+        shouldBuild = choice.build;
+        if (shouldBuild) {
+            await vscode.workspace.fs.delete(dbUri, { recursive: true });
+        }
+    }
+
+    // 3. Build database + write playground files
+    try {
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Building sample playground…',
+            cancellable: false
+        }, async progress => {
+            if (shouldBuild) {
+                progress.report({ message: 'creating database and seeding data' });
+                await buildSampleDatabase(dtlvBridge, dbPath);
+            }
+            progress.report({ message: 'writing playground files' });
+            for (const file of playgroundFiles(dbPath)) {
+                const target = vscode.Uri.file(path.join(root, file.name));
+                await vscode.workspace.fs.writeFile(target, Buffer.from(file.content, 'utf8'));
+            }
+        });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(`Could not build sample playground: ${formatQueryError(message).summary}`);
+        outputChannel.appendLine(`Sample playground build failed: ${message}`);
+        return;
+    }
+
+    // 4. Register, open first file, celebrate
+    openDatabase(context, dbPath);
+    connectionStatus?.refresh();
+
+    const doc = await vscode.workspace.openTextDocument(path.join(root, '01-basics.dtlv.edn'));
+    await vscode.window.showTextDocument(doc);
+
+    const action = await vscode.window.showInformationMessage(
+        'Sample playground ready! Put the cursor in a query and press Ctrl+Enter to run it.',
+        'Open Playground Folder'
+    );
+    if (action === 'Open Playground Folder') {
+        await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(root), { forceNewWindow: false });
+    }
+}
+
+
 function loadRecentDatabases(_context: vscode.ExtensionContext): void {
     const config = vscode.workspace.getConfiguration('levin');
     const recent = config.get<string[]>('recentDatabases', []);
@@ -1036,17 +1188,47 @@ async function createNewQuery(dbPath: string): Promise<void> {
     await vscode.window.showTextDocument(doc);
 }
 
-async function runCurrentQuery(context: vscode.ExtensionContext): Promise<void> {
+async function runCurrentQuery(): Promise<void> {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
         vscode.window.showWarningMessage('No active editor');
         return;
     }
+    if (!await ensureDtlv()) { return; }
 
-    // Try to find the query block at cursor position, otherwise use whole file
-    const cursorLine = editor.selection.active.line;
-    const queryText = extractQueryBlockAtLine(editor.document, cursorLine) || editor.document.getText();
-    await executeQuery(context, queryText);
+    const statements = parseStatements(editor.document.getText());
+    const stmt = statementAtLine(statements.filter(isRunnable), editor.selection.active.line);
+    if (!stmt) {
+        vscode.window.showWarningMessage('No query statement found in this file');
+        return;
+    }
+    await executeStatement(stmt, statements);
+}
+
+async function runAllQueries(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showWarningMessage('No active editor');
+        return;
+    }
+    if (!await ensureDtlv()) { return; }
+
+    const statements = parseStatements(editor.document.getText());
+    const runnable = statements.filter(isRunnable);
+    if (runnable.length === 0) {
+        vscode.window.showWarningMessage('No runnable queries found in this file');
+        return;
+    }
+
+    for (let i = 0; i < runnable.length; i++) {
+        outputChannel.appendLine(`Run All: executing statement ${i + 1}/${runnable.length}`);
+        const success = await executeStatement(runnable[i], statements);
+        if (!success) {
+            vscode.window.showErrorMessage(`Run All stopped: statement ${i + 1} of ${runnable.length} failed`);
+            return;
+        }
+    }
+    vscode.window.showInformationMessage(`Ran ${runnable.length} statement${runnable.length === 1 ? '' : 's'} successfully`);
 }
 
 async function runQueryAtLine(context: vscode.ExtensionContext, line: number): Promise<void> {
@@ -1055,112 +1237,83 @@ async function runQueryAtLine(context: vscode.ExtensionContext, line: number): P
         vscode.window.showWarningMessage('No active editor');
         return;
     }
+    if (!await ensureDtlv()) { return; }
 
-    const queryText = extractQueryBlockAtLine(editor.document, line);
-    if (!queryText) {
+    const statements = parseStatements(editor.document.getText());
+    const stmt = statementAtLine(statements.filter(isRunnable), line);
+    if (!stmt) {
         vscode.window.showWarningMessage('No query block found at this location');
         return;
     }
-    await executeQuery(context, queryText);
+    await executeStatement(stmt, statements);
 }
 
 /**
- * Extract the query block (EDN map with :db and :query) at or after the given line
+ * Check that dtlv is installed, prompting for install otherwise
  */
-function extractQueryBlockAtLine(document: vscode.TextDocument, line: number): string | null {
-    const text = document.getText();
-
-    // Find all query block starts
-    const queryPattern = /\{[^{}]*:db\s+"[^"]+"/g;
-    let match;
-    let bestMatch: { start: number; end: number } | null = null;
-
-    while ((match = queryPattern.exec(text)) !== null) {
-        const matchStartPos = document.positionAt(match.index);
-
-        // Find the matching closing brace for this block
-        let braceCount = 0;
-        let blockEnd = match.index;
-
-        for (let i = match.index; i < text.length; i++) {
-            if (text[i] === '{') braceCount++;
-            else if (text[i] === '}') {
-                braceCount--;
-                if (braceCount === 0) {
-                    blockEnd = i + 1;
-                    break;
-                }
-            }
-        }
-
-        const matchEndPos = document.positionAt(blockEnd);
-
-        // Check if the given line falls within this block
-        if (line >= matchStartPos.line && line <= matchEndPos.line) {
-            bestMatch = { start: match.index, end: blockEnd };
-            break;
-        }
-
-        // If we haven't found a match yet and this block starts at or after our line,
-        // use it (for cases where CodeLens is at the start of the block)
-        if (!bestMatch && matchStartPos.line >= line) {
-            bestMatch = { start: match.index, end: blockEnd };
-            break;
-        }
-    }
-
-    if (bestMatch) {
-        return text.substring(bestMatch.start, bestMatch.end);
-    }
-
-    return null;
-}
-
-async function executeQuery(context: vscode.ExtensionContext, queryText: string): Promise<void> {
-    // Check dtlv is installed
+async function ensureDtlv(): Promise<boolean> {
     const dtlvInstalled = await dtlvBridge.checkDtlvInstalled();
     if (!dtlvInstalled) {
         await dtlvBridge.promptInstallDtlv();
-        return;
     }
+    return dtlvInstalled;
+}
 
+/**
+ * Execute a single parsed statement. Returns true on success.
+ */
+async function executeStatement(stmt: QueryStatement, statements: QueryStatement[]): Promise<boolean> {
     try {
-        // Parse the query to extract components
-        const dbMatch = queryText.match(/:db\s+"([^"]+)"/);
-        const dbPath = dbMatch?.[1];
+        const pin = vscode.window.activeTextEditor
+            ? connectionStatus?.getPinned(vscode.window.activeTextEditor.document.uri)
+            : undefined;
+        let dbPath = resolveDbPath(statements, stmt, pin);
 
         if (!dbPath) {
-            vscode.window.showErrorMessage('Must specify :db with database path');
-            return;
+            // No :db anywhere - ask the user (e.g. for bare queries)
+            dbPath = (await selectDatabase()) ?? null;
+            if (!dbPath) {
+                vscode.window.showErrorMessage('Must specify :db with database path');
+                return false;
+            }
         }
 
-        // Check if this is a transaction or a query
-        const hasTransact = /:transact\s+\[/.test(queryText);
-        const hasQuery = /:query\s+\[/.test(queryText);
-
-        if (hasTransact) {
-            await executeTransaction(dbPath, queryText);
-        } else if (hasQuery) {
-            await executeDatalogQuery(dbPath, queryText);
-        } else {
-            vscode.window.showErrorMessage('Must specify either :query or :transact');
+        if (stmt.transactText) {
+            return await executeTransaction(dbPath, stmt.transactText);
         }
+        if (stmt.queryText) {
+            return await executeDatalogQuery(dbPath, stmt.queryText, stmt.limit ?? 50, stmt.text, {
+                rules: stmt.rulesText ? parseRulesSpec(stmt.rulesText) : undefined,
+                args: stmt.argsText ? splitEdnVector(stmt.argsText) : undefined
+            });
+        }
+
+        vscode.window.showErrorMessage('Must specify either :query or :transact');
+        return false;
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to execute: ${error}`);
+        return false;
     }
 }
 
-async function executeTransaction(dbPath: string, queryText: string): Promise<void> {
-    // Extract the transact portion - match balanced brackets
-    const transactMatch = queryText.match(/:transact\s+(\[[\s\S]*\])(?=\s*:|\s*\}|$)/);
-    if (!transactMatch) {
-        vscode.window.showErrorMessage('Could not parse :transact data');
+/**
+ * Execute raw query text (saved queries, NLQ blocks): parse and run the
+ * first runnable statement in it.
+ */
+async function executeQuery(context: vscode.ExtensionContext, queryText: string): Promise<void> {
+    if (!await ensureDtlv()) { return; }
+
+    const statements = parseStatements(queryText);
+    const stmt = statements.find(isRunnable);
+    if (!stmt) {
+        vscode.window.showErrorMessage('Must specify either :query or :transact');
         return;
     }
+    await executeStatement(stmt, statements);
+}
 
-    const txData = transactMatch[1];
-
-    await vscode.window.withProgress({
+async function executeTransaction(dbPath: string, txData: string): Promise<boolean> {
+    return vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: 'Executing transaction...',
         cancellable: false
@@ -1175,37 +1328,38 @@ async function executeTransaction(dbPath: string, queryText: string): Promise<vo
             );
             // Refresh the explorer to show new data
             vscode.commands.executeCommand('levin.refreshExplorer');
+            return true;
         } else {
-            if (!errorPanel) {
-                errorPanel = new ErrorPanel();
+            // Show the error inline in the results panel
+            if (!resultsPanel) {
+                resultsPanel = new ResultsPanel(dtlvBridge);
             }
-            errorPanel.show(result.error || 'Unknown error', txData);
-            vscode.window.showErrorMessage('Transaction failed - see error panel for details');
+            resultsPanel.showError(result.error || 'Unknown error', dbPath, txData);
+            vscode.window.showErrorMessage(`Transaction failed: ${formatQueryError(result.error || '').summary}`);
+            return false;
         }
     });
 }
 
-async function executeDatalogQuery(dbPath: string, queryText: string): Promise<void> {
-    // Extract the query portion
-    const queryPortionMatch = queryText.match(/:query\s+(\[[\s\S]*?\])(?=\s*:|\s*\})/);
-    const queryPortion = queryPortionMatch?.[1] || '[:find ?e :where [?e :db/id _]]';
-
-    // Extract limit
-    const limitMatch = queryText.match(/:limit\s+(\d+)/);
-    const limit = limitMatch ? parseInt(limitMatch[1], 10) : 50;
-
+async function executeDatalogQuery(
+    dbPath: string,
+    queryPortion: string,
+    limit: number,
+    historyText?: string,
+    inputs?: { rules?: string[] | 'all'; args?: string[] }
+): Promise<boolean> {
     // Show progress
-    await vscode.window.withProgress({
+    return vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: 'Running query...',
         cancellable: false
     }, async () => {
-        const result = await dtlvBridge.runQuery(dbPath, queryPortion, limit);
+        const result = await dtlvBridge.runQuery(dbPath, queryPortion, limit, inputs);
         outputChannel.appendLine(`Query executed. Success: ${result.success}, Results: ${(result.data as {results?: unknown[]})?.results?.length ?? 0}`);
 
         if (result.success) {
-            // Add to history
-            queryHistoryProvider.addQuery(queryText);
+            // Add to history (full statement text, so it can be re-run with its :db)
+            queryHistoryProvider.addQuery(historyText ?? queryPortion);
 
             // Show results panel
             if (!resultsPanel) {
@@ -1213,15 +1367,17 @@ async function executeDatalogQuery(dbPath: string, queryText: string): Promise<v
             }
             outputChannel.appendLine(`Showing results with query: ${queryPortion.substring(0, 100)}...`);
             resultsPanel.show(result.data, dbPath, queryPortion);
+            return true;
         } else {
-            // Show error in dedicated error panel
-            if (!errorPanel) {
-                errorPanel = new ErrorPanel();
+            // Show the error inline in the results panel, query called out
+            if (!resultsPanel) {
+                resultsPanel = new ResultsPanel(dtlvBridge);
             }
-            errorPanel.show(result.error || 'Unknown error', queryPortion);
+            resultsPanel.showError(result.error || 'Unknown error', dbPath, queryPortion);
 
             // Also show a brief notification
-            vscode.window.showErrorMessage('Query failed - see error panel for details');
+            vscode.window.showErrorMessage(`Query failed: ${formatQueryError(result.error || '').summary}`);
+            return false;
         }
     });
 }
@@ -1423,7 +1579,6 @@ async function nlqGenerateQuery(
                 await new Promise(resolve => setTimeout(resolve, 100));
 
                 // Execute the query
-                const updatedText = editor.document.getText();
                 const updatedBlock = extractNlqBlockAtLine(editor.document, line);
                 if (updatedBlock) {
                     await executeQuery(context, updatedBlock.text);
@@ -1444,53 +1599,12 @@ function extractNlqBlockAtLine(
     document: vscode.TextDocument,
     line: number
 ): { text: string; start: number; end: number } | null {
-    const text = document.getText();
+    const statements = parseStatements(document.getText()).filter(s => s.kind === 'nlq');
 
-    // Find all NLQ block starts
-    const nlqPattern = /\{[^{}]*:nlq\s+"[^"]+"/g;
-    let match;
+    const containing = statements.find(s => line >= s.startLine && line <= s.endLine);
+    const stmt = containing ?? statements.find(s => s.startLine >= line) ?? null;
 
-    while ((match = nlqPattern.exec(text)) !== null) {
-        const matchStartPos = document.positionAt(match.index);
-
-        // Find the matching closing brace for this block
-        let braceCount = 0;
-        let blockEnd = match.index;
-
-        for (let i = match.index; i < text.length; i++) {
-            if (text[i] === '{') braceCount++;
-            else if (text[i] === '}') {
-                braceCount--;
-                if (braceCount === 0) {
-                    blockEnd = i + 1;
-                    break;
-                }
-            }
-        }
-
-        const matchEndPos = document.positionAt(blockEnd);
-
-        // Check if the given line falls within this block
-        if (line >= matchStartPos.line && line <= matchEndPos.line) {
-            return {
-                text: text.substring(match.index, blockEnd),
-                start: match.index,
-                end: blockEnd
-            };
-        }
-
-        // If we haven't found a match yet and this block starts at or after our line,
-        // use it (for cases where CodeLens is at the start of the block)
-        if (matchStartPos.line >= line) {
-            return {
-                text: text.substring(match.index, blockEnd),
-                start: match.index,
-                end: blockEnd
-            };
-        }
-    }
-
-    return null;
+    return stmt ? { text: stmt.text, start: stmt.start, end: stmt.end } : null;
 }
 
 export function deactivate(): void {

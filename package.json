@@ -2,7 +2,7 @@
   "name": "levin",
   "displayName": "Levin",
   "description": "Browse, query, and manage Datalevin databases in VS Code",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "publisher": "KwabenaBosompem",
   "author": {
     "name": "Kwabena Bosompem"
@@ -52,7 +52,13 @@
       },
       {
         "command": "levin.runQuery",
-        "title": "Levin: Run Query"
+        "title": "Levin: Run Query",
+        "icon": "$(play)"
+      },
+      {
+        "command": "levin.runAllQueries",
+        "title": "Levin: Run All Queries in File",
+        "icon": "$(run-all)"
       },
       {
         "command": "levin.showEntity",
@@ -73,7 +79,8 @@
       },
       {
         "command": "levin.createDatabase",
-        "title": "Levin: Create New Database"
+        "title": "Levin: Create New Database",
+        "icon": "$(add)"
       },
       {
         "command": "levin.copyPath",
@@ -185,6 +192,53 @@
         "command": "levin.nlqRegenerate",
         "title": "Levin: Regenerate Query",
         "icon": "$(sparkle)"
+      },
+      {
+        "command": "levin.vectorSearch",
+        "title": "Levin: Vector Similarity Search",
+        "icon": "$(symbol-array)"
+      },
+      {
+        "command": "levin.trySampleDatabase",
+        "title": "Levin: Try Sample Playground",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "levin.pinDatabase",
+        "title": "Levin: Pin Database to This File",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "levin.paredit.forwardSexp",
+        "title": "Levin: Paredit Forward S-Expression"
+      },
+      {
+        "command": "levin.paredit.backwardSexp",
+        "title": "Levin: Paredit Backward S-Expression"
+      },
+      {
+        "command": "levin.paredit.wrapRound",
+        "title": "Levin: Paredit Wrap with ( )"
+      },
+      {
+        "command": "levin.paredit.wrapSquare",
+        "title": "Levin: Paredit Wrap with [ ]"
+      },
+      {
+        "command": "levin.paredit.slurpForward",
+        "title": "Levin: Paredit Slurp Forward"
+      },
+      {
+        "command": "levin.paredit.barfForward",
+        "title": "Levin: Paredit Barf Forward"
+      },
+      {
+        "command": "levin.paredit.raise",
+        "title": "Levin: Paredit Raise"
+      },
+      {
+        "command": "levin.paredit.splice",
+        "title": "Levin: Paredit Splice"
       }
     ],
     "viewsContainers": {
@@ -212,10 +266,102 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "levin.databases",
+        "contents": "No databases open yet.\n[Try the Sample Playground](command:levin.trySampleDatabase) - one click builds a seeded demo database with guided query files.\n[Open Database](command:levin.openDatabase)\n[Create New Database](command:levin.createDatabase)"
+      },
+      {
+        "view": "levin.savedQueries",
+        "contents": "No saved queries yet.\nUse the **Save** CodeLens above any statement in a `.dtlv.edn` file to keep it here."
+      },
+      {
+        "view": "levin.history",
+        "contents": "No queries run yet.\nRun a query with `Ctrl+Enter` from any `.dtlv.edn` file and it will show up here."
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "levin.gettingStarted",
+        "title": "Get started with Levin",
+        "description": "Query and manage Datalevin databases without leaving VS Code.",
+        "steps": [
+          {
+            "id": "levin.playground",
+            "title": "Create your sample playground",
+            "description": "One click builds a seeded Mini-Northwind database - schema, data, rules, and vector embeddings included - plus five guided `.dtlv.edn` query files that teach every feature.\n[Create the Sample Playground](command:levin.trySampleDatabase)",
+            "completionEvents": ["onCommand:levin.trySampleDatabase"]
+          },
+          {
+            "id": "levin.firstQuery",
+            "title": "Run your first query",
+            "description": "In `01-basics.dtlv.edn`, click inside any query and press `Ctrl+Enter` (`Cmd+Enter` on macOS). The play button in the editor title, or the CodeLens above each statement, does the same. `Cmd+Shift+Enter` runs the whole file.\n[Run Query at Cursor](command:levin.runQuery)",
+            "completionEvents": ["onCommand:levin.runQuery"]
+          },
+          {
+            "id": "levin.pin",
+            "title": "Pin a database to your file",
+            "description": "The status bar shows which database a query file targets. Click it to pin a different one - just like connections in SQL tools.\n[Pin a Database](command:levin.pinDatabase)"
+          },
+          {
+            "id": "levin.entities",
+            "title": "Browse and inspect entities",
+            "description": "Click any entity id in the results panel to inspect it, or browse every entity in the database.\n[Browse Entities](command:levin.browseEntities)",
+            "completionEvents": ["onCommand:levin.browseEntities"]
+          },
+          {
+            "id": "levin.relationships",
+            "title": "Explore relationships",
+            "description": "References are first-class in Datalevin. The `02-relationships` playground file covers joins and pull; this panel draws the graph.\n[View Relationships](command:levin.showRelationships)",
+            "completionEvents": ["onCommand:levin.showRelationships"]
+          },
+          {
+            "id": "levin.rules",
+            "title": "Reuse logic with rules",
+            "description": "Rules are named, reusable query clauses stored in the database - the sample ships a recursive org-chart rule. See `03-rules.dtlv.edn`, then manage your own.\n[Manage Rules](command:levin.showRules)",
+            "completionEvents": ["onCommand:levin.showRules"]
+          },
+          {
+            "id": "levin.vector",
+            "title": "Search by similarity",
+            "description": "Every sample product has an embedding, so nearest-neighbor search is one Datalog clause. See `04-vector-search.dtlv.edn`, or use the visual panel.\n[Vector Similarity Search](command:levin.vectorSearch)",
+            "completionEvents": ["onCommand:levin.vectorSearch"]
+          },
+          {
+            "id": "levin.transact",
+            "title": "Add and shape data",
+            "description": "Writes are plain data: run the `:transact` statement in `05-beyond-sql.dtlv.edn`, use the transaction panel, or evolve the schema.\n[Open Transaction Panel](command:levin.showTransactionPanel)\n[Edit Schema](command:levin.editSchema)",
+            "completionEvents": ["onCommand:levin.showTransactionPanel"]
+          },
+          {
+            "id": "levin.save",
+            "title": "Save and reuse queries",
+            "description": "Keep useful queries one click away: the **Save** CodeLens above any statement adds it to the Saved Queries view, and every run lands in Query History.\n[Open Saved Queries](command:levin.savedQueries.focus)"
+          }
+        ]
+      }
+    ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "levin.runQuery",
+          "when": "editorLangId == datalevin-query",
+          "group": "navigation"
+        },
+        {
+          "command": "levin.runAllQueries",
+          "when": "editorLangId == datalevin-query",
+          "group": "navigation"
+        }
+      ],
       "view/title": [
         {
           "command": "levin.openDatabase",
+          "when": "view == levin.databases",
+          "group": "navigation"
+        },
+        {
+          "command": "levin.createDatabase",
           "when": "view == levin.databases",
           "group": "navigation"
         },
@@ -253,6 +399,11 @@
         },
         {
           "command": "levin.importData",
+          "when": "viewItem == database",
+          "group": "navigation"
+        },
+        {
+          "command": "levin.vectorSearch",
           "when": "viewItem == database",
           "group": "navigation"
         },
@@ -320,9 +471,63 @@
         "when": "editorLangId == datalevin-query"
       },
       {
+        "command": "levin.runAllQueries",
+        "key": "ctrl+shift+enter",
+        "mac": "cmd+shift+enter",
+        "when": "editorLangId == datalevin-query"
+      },
+      {
         "command": "levin.refreshExplorer",
         "key": "ctrl+alt+l r",
         "mac": "cmd+alt+l r"
+      },
+      {
+        "command": "levin.paredit.forwardSexp",
+        "key": "ctrl+alt+right",
+        "mac": "cmd+alt+right",
+        "when": "editorTextFocus && editorLangId == datalevin-query"
+      },
+      {
+        "command": "levin.paredit.backwardSexp",
+        "key": "ctrl+alt+left",
+        "mac": "cmd+alt+left",
+        "when": "editorTextFocus && editorLangId == datalevin-query"
+      },
+      {
+        "command": "levin.paredit.slurpForward",
+        "key": "ctrl+alt+]",
+        "mac": "cmd+alt+]",
+        "when": "editorTextFocus && editorLangId == datalevin-query"
+      },
+      {
+        "command": "levin.paredit.barfForward",
+        "key": "ctrl+alt+[",
+        "mac": "cmd+alt+[",
+        "when": "editorTextFocus && editorLangId == datalevin-query"
+      },
+      {
+        "command": "levin.paredit.wrapRound",
+        "key": "ctrl+alt+w",
+        "mac": "cmd+alt+w",
+        "when": "editorTextFocus && editorLangId == datalevin-query"
+      },
+      {
+        "command": "levin.paredit.wrapSquare",
+        "key": "ctrl+alt+shift+w",
+        "mac": "cmd+alt+shift+w",
+        "when": "editorTextFocus && editorLangId == datalevin-query"
+      },
+      {
+        "command": "levin.paredit.raise",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
+        "when": "editorTextFocus && editorLangId == datalevin-query"
+      },
+      {
+        "command": "levin.paredit.splice",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s",
+        "when": "editorTextFocus && editorLangId == datalevin-query"
       }
     ],
     "languages": [

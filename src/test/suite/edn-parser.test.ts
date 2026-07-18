@@ -36,8 +36,10 @@ suite('EDN Parser Test Suite', () => {
     });
 
     test('Should parse keywords', () => {
-        assert.strictEqual(parseEdn(':keyword'), ':keyword');
-        assert.strictEqual(parseEdn(':user/name'), ':user/name');
+        // Deliberate since 0.2.6: keywords lose the leading colon so
+        // consumers can use plain JS property access (result.total)
+        assert.strictEqual(parseEdn(':keyword'), 'keyword');
+        assert.strictEqual(parseEdn(':user/name'), 'user/name');
     });
 
     test('Should parse vectors', () => {
@@ -53,14 +55,14 @@ suite('EDN Parser Test Suite', () => {
 
     test('Should parse maps', () => {
         const result = parseEdn('{:name "Alice" :age 30}') as Record<string, unknown>;
-        assert.strictEqual(result[':name'], 'Alice');
-        assert.strictEqual(result[':age'], 30);
+        assert.strictEqual(result['name'], 'Alice');
+        assert.strictEqual(result['age'], 30);
     });
 
     test('Should parse nested maps', () => {
         const result = parseEdn('{:user {:name "Alice"}}') as Record<string, unknown>;
-        const user = result[':user'] as Record<string, unknown>;
-        assert.strictEqual(user[':name'], 'Alice');
+        const user = result['user'] as Record<string, unknown>;
+        assert.strictEqual(user['name'], 'Alice');
     });
 
     test('Should parse lists', () => {
@@ -97,10 +99,10 @@ suite('EDN Parser Test Suite', () => {
                      :truncated false}`;
         const result = parseEdn(edn) as Record<string, unknown>;
 
-        assert.strictEqual(result[':total'], 2);
-        assert.strictEqual(result[':truncated'], false);
+        assert.strictEqual(result['total'], 2);
+        assert.strictEqual(result['truncated'], false);
 
-        const results = result[':results'] as unknown[][];
+        const results = result['results'] as unknown[][];
         assert.strictEqual(results.length, 2);
         assert.strictEqual(results[0][1], 'Alice');
     });

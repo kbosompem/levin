@@ -90,7 +90,7 @@ export class RelationshipsPanel {
 
     private async loadRefAttributes(dbPath: string): Promise<void> {
         const state = this.panels.get(dbPath);
-        if (!state) return;
+        if (!state) {return;}
 
         // Use data-driven discovery to find actual ref targets
         const result = await this.dtlvBridge.discoverRefTargets(dbPath);
@@ -156,7 +156,7 @@ export class RelationshipsPanel {
 
     private updateContent(dbPath: string): void {
         const state = this.panels.get(dbPath);
-        if (!state) return;
+        if (!state) {return;}
         state.panel.webview.html = this.getHtml(state);
     }
 
@@ -465,7 +465,7 @@ export class RelationshipsPanel {
     }
 
     private generateNetworkDiagram(state: PanelState): string {
-        if (state.namespaces.length === 0) return '';
+        if (state.namespaces.length === 0) {return '';}
 
         const nodeWidth = 100;
         const nodeHeight = 36;
@@ -491,11 +491,11 @@ export class RelationshipsPanel {
         const svgHeight = 2 * (radius + padding + nodeHeight);
 
         // Generate edges (curved paths)
-        const edgesSvg = state.edges.map((edge, idx) => {
+        const edgesSvg = state.edges.map((edge) => {
             const fromPos = nodePositions[edge.from];
             const toPos = nodePositions[edge.to];
 
-            if (!fromPos || !toPos) return '';
+            if (!fromPos || !toPos) {return '';}
 
             const strokeStyle = edge.cardinality === 'many' ? 'stroke-dasharray: 5,3;' : '';
 

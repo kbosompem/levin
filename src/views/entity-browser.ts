@@ -76,7 +76,7 @@ export class EntityBrowser {
 
     private async handleMessage(message: { command: string; [key: string]: unknown }, dbPath: string): Promise<void> {
         const state = this.panels.get(dbPath);
-        if (!state) return;
+        if (!state) {return;}
 
         switch (message.command) {
             case 'changePage':
@@ -106,7 +106,7 @@ export class EntityBrowser {
 
     private async loadEntities(dbPath: string): Promise<void> {
         const state = this.panels.get(dbPath);
-        if (!state) return;
+        if (!state) {return;}
 
         // Show loading state
         state.panel.webview.postMessage({ command: 'loading', isLoading: true });
@@ -139,7 +139,7 @@ export class EntityBrowser {
 
     private applyFilter(dbPath: string): void {
         const state = this.panels.get(dbPath);
-        if (!state) return;
+        if (!state) {return;}
 
         if (state.namespaceFilter) {
             state.filteredEntities = state.entities.filter(e => e.namespace === state.namespaceFilter);
@@ -150,7 +150,7 @@ export class EntityBrowser {
 
     private updateContent(dbPath: string): void {
         const state = this.panels.get(dbPath);
-        if (!state) return;
+        if (!state) {return;}
         state.panel.webview.html = this.getHtml(state);
     }
 

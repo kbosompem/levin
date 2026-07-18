@@ -135,8 +135,8 @@ export function parseNlqBlock(text: string): { nlq?: string; query?: string; not
             let depth = 0;
             let bracketEnd = bracketStart;
             for (let i = bracketStart; i < text.length; i++) {
-                if (text[i] === '[') depth++;
-                else if (text[i] === ']') depth--;
+                if (text[i] === '[') {depth++;}
+                else if (text[i] === ']') {depth--;}
                 if (depth === 0) {
                     bracketEnd = i;
                     break;

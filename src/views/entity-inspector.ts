@@ -408,16 +408,16 @@ export class EntityInspector {
     }
 
     private isImageAttribute(key: string, displayType: string): boolean {
-        if (displayType === 'image') return true;
-        if (displayType && displayType !== 'image') return false;
+        if (displayType === 'image') {return true;}
+        if (displayType && displayType !== 'image') {return false;}
         // Fallback to name-based detection
         const lowerKey = key.toLowerCase();
         return lowerKey.includes('photo') || lowerKey.includes('image') || lowerKey.includes('picture') || lowerKey.includes('avatar');
     }
 
     private isHyperlinkValue(value: string, displayType: string): boolean {
-        if (displayType === 'hyperlink') return true;
-        if (displayType && displayType !== 'hyperlink') return false;
+        if (displayType === 'hyperlink') {return true;}
+        if (displayType && displayType !== 'hyperlink') {return false;}
         // Auto-detect URLs
         return value.startsWith('http://') || value.startsWith('https://');
     }
@@ -471,10 +471,10 @@ export class EntityInspector {
         cleanHex = this.stripOleWrapper(cleanHex).toLowerCase();
 
         // Check magic bytes after stripping OLE
-        if (cleanHex.startsWith('ffd8ff')) return 'jpeg';
-        if (cleanHex.startsWith('89504e47')) return 'png';
-        if (cleanHex.startsWith('47494638')) return 'gif';
-        if (cleanHex.startsWith('424d')) return 'bmp';
+        if (cleanHex.startsWith('ffd8ff')) {return 'jpeg';}
+        if (cleanHex.startsWith('89504e47')) {return 'png';}
+        if (cleanHex.startsWith('47494638')) {return 'gif';}
+        if (cleanHex.startsWith('424d')) {return 'bmp';}
         return 'bmp'; // default for OLE-wrapped data
     }
 
