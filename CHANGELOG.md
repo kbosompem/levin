@@ -5,6 +5,45 @@ All notable changes to the Levin extension will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.8.5] - 2026-07-21
+
+### Added
+
+- **levin-bb query engine** - Levin now runs on its own bundled engine: a
+  custom [babashka](https://github.com/babashka/babashka) build with Datalevin
+  0.10.18 and core.logic 1.1.0 (including CLP(FD)) compiled in. One persistent
+  process serves all queries over stdio instead of spawning `dtlv` per query -
+  warm queries run in single-digit milliseconds. Levin offers to download the
+  engine for your platform on activation (macOS arm64/x64, Linux amd64/arm64,
+  from [levin-bb releases](https://github.com/kbosompem/babashka/releases));
+  `dtlv` remains a fully supported fallback and the only backend on Windows
+  for now. Configure with `levin.bbPath`, or leave empty for auto-detection.
+- **core.logic in the engine** - `clojure.core.logic` (+ `fd`, `pldb`,
+  `unifier`) is available to any code the engine runs, opening the door to
+  constraint solving over database facts: query facts out, solve, transact
+  solutions back.
+- **Chart cells** - add a `:chart` map to any notebook statement and the output
+  becomes a Vega-Lite chart: shorthand (`:chart {:mark :bar :x ?name :y ?price}`,
+  `:mark :arc` for pie/donut, `:color`, `:aggregate`) with types inferred from
+  values, or a raw Vega-Lite spec (`:chart {:spec {...}}`) for the full chart
+  catalog. Charts and tables coexist - flip between them with the output's
+  mime picker. The sample playground now includes `06-charts.dtlvnb`.
+- **Rich notebook output** - cell results render as a sortable table or an
+  expandable tree with entity links into the inspector
+  (`application/vnd.levin.results+json` renderer).
+- **Jupyter-style notebooks (.dtlvnb)** - ipynb-compatible notebook files with
+  markdown and code cells. Code cells hold the same statements as `.dtlv.edn`
+  files and run against Datalevin via `Ctrl+Enter` per cell or Run All;
+  `:db` inherits from earlier cells, `:rules`/`:args` work, and outputs
+  (results or friendly errors) persist in the file, so GitHub renders them.
+- **JSON to EDN conversion** - `Levin: Convert JSON to EDN` converts the editor
+  selection in place, or clipboard to clipboard. Keys become keywords with
+  camelCase converted to kebab-case (`companyName` -> `:company-name`),
+  namespaces preserved (`order/customer`). **Levin: Import Data** now accepts
+  `.json` files and JSON URLs alongside EDN, converting automatically.
+
 ## [0.8.0] - 2026-07-17
 
 ### Added

@@ -125,16 +125,16 @@ suite('Playground Files Test Suite', () => {
     const DB = '/tmp/levin-playground-check';
     const files = playgroundFiles(DB);
 
-    test('Five numbered playground files', () => {
+    test('Six playground files, five queries plus a charts notebook', () => {
         assert.deepStrictEqual(
             files.map(f => f.name),
             ['01-basics.dtlv.edn', '02-relationships.dtlv.edn', '03-rules.dtlv.edn',
-             '04-vector-search.dtlv.edn', '05-beyond-sql.dtlv.edn']
+             '04-vector-search.dtlv.edn', '05-beyond-sql.dtlv.edn', '06-charts.dtlvnb']
         );
     });
 
-    test('Every file parses into runnable statements and puts :db only on the first', () => {
-        for (const file of files) {
+    test('Every .edn file parses into runnable statements and puts :db only on the first', () => {
+        for (const file of files.filter(f => f.name.endsWith('.edn'))) {
             const stmts = parseStatements(file.content);
             const runnable = stmts.filter(isRunnable);
             assert.ok(runnable.length >= 3, `${file.name} should have several runnable statements`);
@@ -144,6 +144,20 @@ suite('Playground Files Test Suite', () => {
                 assert.strictEqual(stmt.db, undefined,
                     `${file.name}: later statements should inherit :db, found one at line ${stmt.startLine + 1}`);
             }
+        }
+    });
+
+    test('The charts notebook is valid ipynb with a :db in its first code cell', () => {
+        const nb = files.find(f => f.name === '06-charts.dtlvnb')!;
+        const parsed = JSON.parse(nb.content);
+        assert.strictEqual(parsed.nbformat, 4);
+        assert.ok(Array.isArray(parsed.cells));
+        const codeCells = parsed.cells.filter((c: { cell_type: string }) => c.cell_type === 'code');
+        assert.strictEqual(codeCells.length, 3);
+        assert.ok(codeCells[0].source.join('').includes(`:db "${DB}"`));
+        // Every code cell is a chart statement
+        for (const cell of codeCells) {
+            assert.ok(cell.source.join('').includes(':chart'), 'code cell should carry :chart');
         }
     });
 

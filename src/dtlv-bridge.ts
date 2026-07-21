@@ -1,8 +1,49 @@
 import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 import * as path from 'path';
+import * as fs from 'fs';
+import * as https from 'https';
 import { parseEdn } from './utils/edn-parser';
 import { formatQueryError } from './utils/error-formatter';
+
+/** Release tag on kbosompem/babashka that binaries are downloaded from. */
+const LEVIN_BB_RELEASE = 'levin-bb-v0.1.0';
+
+/** Map node's platform/arch to a levin-bb release asset name, or null if unsupported. */
+function levinBbAssetName(): string | null {
+    const key = `${process.platform}-${process.arch}`;
+    const assets: Record<string, string> = {
+        'darwin-arm64': 'levin-bb-macos-aarch64.tar.gz',
+        'darwin-x64': 'levin-bb-macos-x64.tar.gz',
+        'linux-x64': 'levin-bb-linux-amd64.tar.gz',
+        'linux-arm64': 'levin-bb-linux-aarch64.tar.gz'
+    };
+    return assets[key] ?? null;
+}
+
+/** Download a URL to a file, following redirects (GitHub releases redirect to a CDN). */
+function downloadFile(url: string, dest: string, redirectsLeft: number = 5): Promise<void> {
+    return new Promise((resolve, reject) => {
+        https.get(url, { headers: { 'User-Agent': 'levin-vscode' } }, (res) => {
+            if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                res.resume();
+                if (redirectsLeft <= 0) { reject(new Error('Too many redirects')); return; }
+                downloadFile(res.headers.location, dest, redirectsLeft - 1).then(resolve, reject);
+                return;
+            }
+            if (res.statusCode !== 200) {
+                res.resume();
+                reject(new Error(`Download failed: HTTP ${res.statusCode} for ${url}`));
+                return;
+            }
+            const out = fs.createWriteStream(dest);
+            res.pipe(out);
+            out.on('finish', () => out.close(() => resolve()));
+            out.on('error', reject);
+            res.on('error', reject);
+        }).on('error', reject);
+    });
+}
 
 export interface QueryResult {
     success: boolean;
@@ -53,8 +94,152 @@ export interface VectorOpts {
     metricType?: string;
 }
 
+/**
+ * Server loop evaluated by the levin-bb binary (custom babashka build with
+ * datalevin + core.logic baked in). Speaks newline-delimited JSON over stdio:
+ *   request:  {"id": 1, "code": "(+ 1 2)"}
+ *   response: {"id": 1, "ok": true, "result": "3", "out": ""}
+ * Prints during eval are captured into "out" so they cannot corrupt the protocol.
+ */
+const BB_SERVER_SCRIPT = `
+(require '[cheshire.core :as json])
+(let [rdr (java.io.BufferedReader. *in*)]
+  (loop []
+    (when-let [line (.readLine rdr)]
+      (let [{:strs [id code]} (try (json/parse-string line) (catch Exception _ nil))]
+        (when id
+          (let [sw (java.io.StringWriter.)
+                resp (try
+                       (let [v (binding [*out* sw] (load-string code))]
+                         {:id id :ok true :result (pr-str v) :out (str sw)})
+                       (catch Throwable t
+                         {:id id :ok false
+                          :err (or (ex-message t) (str (class t)))
+                          :cause (some-> (ex-cause t) ex-message)
+                          :out (str sw)}))]
+            (println (json/generate-string resp))
+            (flush))))
+      (recur))))
+`.trim();
+
+interface BbResponse {
+    id?: number;
+    ok: boolean;
+    result?: string;
+    out?: string;
+    err?: string;
+    cause?: string;
+}
+
+/**
+ * Long-lived levin-bb process. One instance serves all requests for the
+ * session: no per-query process spawn, no repeated LMDB env open/close races.
+ * If the process dies (or a request times out) it is killed and respawned on
+ * the next request.
+ */
+class BbServer {
+    private proc: import('child_process').ChildProcess | null = null;
+    private buf = '';
+    private nextId = 1;
+    private pending = new Map<number, (resp: BbResponse) => void>();
+
+    constructor(
+        private binPath: string,
+        private log: (message: string) => void,
+        private requestTimeoutMs: number = 120000
+    ) {}
+
+    private ensureStarted(): boolean {
+        if (this.proc && this.proc.exitCode === null) {
+            return true;
+        }
+        try {
+            this.proc = spawn(this.binPath, ['-e', BB_SERVER_SCRIPT], {
+                env: { ...process.env }
+            });
+        } catch {
+            this.proc = null;
+            return false;
+        }
+        this.buf = '';
+        this.proc.stdout?.on('data', (data) => this.onData(data.toString()));
+        this.proc.stderr?.on('data', (data) => this.log('[levin-bb] ' + data.toString().trimEnd()));
+        this.proc.on('close', (code) => {
+            this.failAllPending(`levin-bb server exited (code ${code})`);
+            this.proc = null;
+        });
+        this.proc.on('error', (error) => {
+            this.failAllPending(`levin-bb server error: ${error.message}`);
+            this.proc = null;
+        });
+        this.log(`[levin-bb] server started (pid ${this.proc.pid})`);
+        return true;
+    }
+
+    private failAllPending(err: string): void {
+        this.log('[levin-bb] ' + err);
+        for (const cb of this.pending.values()) {
+            cb({ ok: false, err });
+        }
+        this.pending.clear();
+    }
+
+    private onData(chunk: string): void {
+        this.buf += chunk;
+        let idx: number;
+        while ((idx = this.buf.indexOf('\n')) >= 0) {
+            const line = this.buf.slice(0, idx).trim();
+            this.buf = this.buf.slice(idx + 1);
+            if (!line) { continue; }
+            try {
+                const resp = JSON.parse(line) as BbResponse;
+                if (resp.id !== undefined && this.pending.has(resp.id)) {
+                    const cb = this.pending.get(resp.id)!;
+                    this.pending.delete(resp.id);
+                    cb(resp);
+                }
+            } catch {
+                this.log('[levin-bb] unparseable server output: ' + line);
+            }
+        }
+    }
+
+    exec(code: string): Promise<BbResponse> {
+        if (!this.ensureStarted() || !this.proc?.stdin?.writable) {
+            return Promise.resolve({ ok: false, err: 'levin-bb server not available' });
+        }
+        const id = this.nextId++;
+        return new Promise<BbResponse>((resolve) => {
+            const timer = setTimeout(() => {
+                if (this.pending.has(id)) {
+                    this.pending.delete(id);
+                    this.log(`[levin-bb] request ${id} timed out; restarting server`);
+                    this.proc?.kill();
+                    this.proc = null;
+                    resolve({ ok: false, err: `levin-bb request timed out after ${this.requestTimeoutMs}ms` });
+                }
+            }, this.requestTimeoutMs);
+            this.pending.set(id, (resp) => {
+                clearTimeout(timer);
+                resolve(resp);
+            });
+            this.proc!.stdin!.write(JSON.stringify({ id, code }) + '\n');
+        });
+    }
+
+    dispose(): void {
+        this.proc?.kill();
+        this.proc = null;
+        this.pending.clear();
+    }
+}
+
 export class DtlvBridge {
     private dtlvPath: string = 'dtlv';
+    private bbPath: string = '';
+    private backend: 'bb' | 'dtlv' = 'dtlv';
+    private bbServer: BbServer | null = null;
+    private storageDir: string = '';
     private openDatabases: Map<string, DatabaseInfo> = new Map();
     private outputChannel?: vscode.OutputChannel;
 
@@ -79,6 +264,110 @@ export class DtlvBridge {
     private loadSettings(): void {
         const config = vscode.workspace.getConfiguration('levin');
         this.dtlvPath = config.get<string>('dtlvPath', 'dtlv');
+        this.bbPath = config.get<string>('bbPath', '');
+    }
+
+    /**
+     * Probe a binary by running `<bin> --version` (no shell involved).
+     */
+    private probeBinary(bin: string): Promise<boolean> {
+        return new Promise((resolve) => {
+            try {
+                const proc = spawn(bin, ['--version']);
+                proc.on('close', (code) => resolve(code === 0));
+                proc.on('error', () => resolve(false));
+            } catch {
+                resolve(false);
+            }
+        });
+    }
+
+    /**
+     * Where downloaded binaries live (the extension's globalStorage dir).
+     * Wired by extension.ts during activation.
+     */
+    setStorageDir(dir: string): void {
+        this.storageDir = dir;
+    }
+
+    /**
+     * Find the levin-bb binary: explicit setting, then a previously
+     * downloaded copy in globalStorage, then the copy bundled with the
+     * extension (bin/levin-bb), then PATH.
+     */
+    private async resolveBbPath(): Promise<string | null> {
+        const candidates = [
+            this.bbPath,
+            this.storageDir ? path.join(this.storageDir, 'levin-bb') : '',
+            path.join(__dirname, '..', 'bin', 'levin-bb'),
+            'levin-bb'
+        ].filter(c => c && c.length > 0);
+        for (const candidate of candidates) {
+            if (await this.probeBinary(candidate)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Download the levin-bb binary for this platform into globalStorage
+     * and activate the bb backend. Returns the binary path, or null when
+     * the platform has no prebuilt binary or the download fails.
+     */
+    async downloadLevinBb(): Promise<string | null> {
+        const asset = levinBbAssetName();
+        if (!asset) {
+            vscode.window.showWarningMessage(
+                `No prebuilt levin-bb binary for ${process.platform}-${process.arch} yet; falling back to dtlv.`
+            );
+            return null;
+        }
+        if (!this.storageDir) {
+            this.log('[levin-bb] no storage dir set; cannot download');
+            return null;
+        }
+        const url = `https://github.com/kbosompem/babashka/releases/download/${LEVIN_BB_RELEASE}/${asset}`;
+        const tarball = path.join(this.storageDir, asset);
+        const binPath = path.join(this.storageDir, 'levin-bb');
+
+        try {
+            return await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: `Levin: downloading query engine (${LEVIN_BB_RELEASE}, ~70MB)…`,
+                    cancellable: false
+                },
+                async () => {
+                    fs.mkdirSync(this.storageDir, { recursive: true });
+                    this.log(`[levin-bb] downloading ${url}`);
+                    await downloadFile(url, tarball);
+                    await new Promise<void>((resolve, reject) => {
+                        const proc = spawn('tar', ['-xzf', tarball], { cwd: this.storageDir });
+                        proc.on('close', (code) =>
+                            code === 0 ? resolve() : reject(new Error(`tar exited with code ${code}`)));
+                        proc.on('error', reject);
+                    });
+                    fs.rmSync(tarball, { force: true });
+                    fs.chmodSync(binPath, 0o755);
+                    if (!(await this.probeBinary(binPath))) {
+                        throw new Error('downloaded binary failed to run');
+                    }
+                    this.bbPath = binPath;
+                    this.backend = 'bb';
+                    this.bbServer?.dispose();
+                    this.bbServer = new BbServer(binPath, (m) => this.log(m));
+                    this.log(`[levin-bb] installed at ${binPath}`);
+                    vscode.window.showInformationMessage('Levin: query engine installed.');
+                    return binPath;
+                }
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.log(`[levin-bb] download failed: ${message}`, true);
+            vscode.window.showErrorMessage(`Levin: query engine download failed (${message}). Falling back to dtlv.`);
+            return null;
+        }
     }
 
     /**
@@ -94,14 +383,62 @@ export class DtlvBridge {
     }
 
     /**
-     * Check if dtlv CLI is available
+     * Check if a query backend is available. Prefers the levin-bb custom
+     * babashka build (long-lived server, datalevin + core.logic built in);
+     * falls back to the dtlv CLI (spawn per query).
      */
     async checkDtlvInstalled(): Promise<boolean> {
-        return new Promise((resolve) => {
+        const bb = await this.resolveBbPath();
+        if (bb) {
+            this.bbPath = bb;
+            this.backend = 'bb';
+            if (!this.bbServer) {
+                this.bbServer = new BbServer(bb, (m) => this.log(m));
+            }
+            this.log(`Backend: levin-bb (${bb})`);
+            return true;
+        }
+        this.backend = 'dtlv';
+        const dtlvOk = await new Promise<boolean>((resolve) => {
             const proc = spawn(this.dtlvPath, ['help'], { shell: true });
-            proc.on('close', (code) => resolve(code === 0));
+            proc.on('close', (code) => {
+                if (code === 0) { this.log(`Backend: dtlv (${this.dtlvPath})`); }
+                resolve(code === 0);
+            });
             proc.on('error', () => resolve(false));
         });
+        if (dtlvOk) {
+            this.suggestBbUpgrade();
+        }
+        return dtlvOk;
+    }
+
+    private bbUpgradeSuggested = false;
+
+    /**
+     * dtlv works, but the levin-bb engine is faster (persistent process) and
+     * adds core.logic. Offer the switch once per session, without blocking.
+     */
+    private suggestBbUpgrade(): void {
+        if (this.bbUpgradeSuggested || !levinBbAssetName()) { return; }
+        this.bbUpgradeSuggested = true;
+        void vscode.window.showInformationMessage(
+            'Levin can install its bundled query engine (faster queries, adds logic solving). Install now?',
+            'Install',
+            'Keep using dtlv'
+        ).then((choice) => {
+            if (choice === 'Install') {
+                void this.downloadLevinBb();
+            }
+        });
+    }
+
+    /**
+     * Shut down the long-lived levin-bb server, if any.
+     */
+    dispose(): void {
+        this.bbServer?.dispose();
+        this.bbServer = null;
     }
 
     /**
@@ -109,12 +446,15 @@ export class DtlvBridge {
      */
     async promptInstallDtlv(): Promise<void> {
         const action = await vscode.window.showErrorMessage(
-            'Datalevin CLI (dtlv) not found. Please install it first.',
+            'No query backend found. Download the levin-bb engine (recommended), or install the Datalevin CLI (dtlv).',
+            'Download Engine',
             'Show Instructions',
             'Set Custom Path'
         );
 
-        if (action === 'Show Instructions') {
+        if (action === 'Download Engine') {
+            await this.downloadLevinBb();
+        } else if (action === 'Show Instructions') {
             vscode.env.openExternal(vscode.Uri.parse('https://github.com/juji-io/datalevin#installation'));
         } else if (action === 'Set Custom Path') {
             const customPath = await vscode.window.showInputBox({
@@ -864,9 +1204,34 @@ export class DtlvBridge {
     }
 
     /**
-     * Internal method to execute dtlv command (single attempt)
+     * Internal method to execute code via the active backend (single attempt)
      */
-    private execDtlvInternal(code: string): Promise<QueryResult> {
+    private async execDtlvInternal(code: string): Promise<QueryResult> {
+        if (this.backend === 'bb' && this.bbServer) {
+            const resp = await this.bbServer.exec(code);
+            if (resp.ok) {
+                const raw = resp.result ?? '';
+                try {
+                    return {
+                        success: true,
+                        data: parseEdn(raw),
+                        stdout: (resp.out ?? '') + raw,
+                        stderr: ''
+                    };
+                } catch {
+                    return { success: true, data: raw, stdout: (resp.out ?? '') + raw, stderr: '' };
+                }
+            }
+            const error = [resp.err, resp.cause].filter(Boolean).join('\n');
+            return { success: false, error, stdout: resp.out ?? '', stderr: error };
+        }
+        return this.execDtlvSpawn(code);
+    }
+
+    /**
+     * Legacy backend: spawn a dtlv process per request
+     */
+    private execDtlvSpawn(code: string): Promise<QueryResult> {
         return new Promise((resolve) => {
             let stdout = '';
             let stderr = '';
@@ -1194,6 +1559,22 @@ export class DtlvBridge {
      */
     async listKvDatabases(dbPath: string): Promise<string[]> {
         const resolvedPath = this.isRemoteUri(dbPath) ? dbPath : this.resolvePath(dbPath);
+
+        // levin-bb backend: use the datalevin API instead of the dtlv CLI dump
+        if (this.backend === 'bb' && this.bbServer) {
+            const code = `
+                (require '[datalevin.core :as d])
+                (let [db (d/open-kv "${this.escapeString(resolvedPath)}")]
+                  (try
+                    (vec (remove #(clojure.string/starts-with? % "datalevin/") (d/list-dbis db)))
+                    (finally (d/close-kv db))))
+            `.trim();
+            const result = await this.execDtlv(code);
+            if (result.success && Array.isArray(result.data)) {
+                return result.data as string[];
+            }
+            throw new Error(result.error || 'Failed to list DBIs');
+        }
 
         return new Promise((resolve, reject) => {
             let stdout = '';

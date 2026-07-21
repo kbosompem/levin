@@ -22,11 +22,14 @@ import { registerDiagnostics } from './providers/diagnostics-provider';
 import { ConnectionStatusProvider } from './providers/connection-status';
 import { registerPareditCommands } from './providers/paredit-commands';
 import { DatalevinQueryFormattingProvider } from './providers/format-provider';
+import { LevinNotebookSerializer } from './notebook/serializer';
+import { LevinNotebookController } from './notebook/controller';
 import { buildSampleDatabase } from './sample/sample-database';
 import { playgroundFiles } from './sample/playground-files';
 import { SAMPLE_DB_DIRNAME } from './sample/northwind-mini';
 import { parseStatements, statementAtLine, resolveDbPath, isRunnable, parseRulesSpec, splitEdnVector, QueryStatement } from './utils/query-statements';
 import { formatQueryError } from './utils/error-formatter';
+import { jsonToEdn, looksLikeJson } from './utils/json-to-edn';
 import * as nlq from './nlq';
 
 let dtlvBridge: DtlvBridge;
@@ -60,6 +63,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         // Initialize dtlv bridge
         dtlvBridge = new DtlvBridge(outputChannel);
+        dtlvBridge.setStorageDir(context.globalStorageUri.fsPath);
 
         // Restore per-database vector opts (required to open vector DBs)
         dtlvBridge.loadVectorOpts(context.globalState.get<Record<string, VectorOpts>>('levin.vectorOpts', {}));
@@ -140,6 +144,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     registerDiagnostics(context);
     connectionStatus = new ConnectionStatusProvider(context, dtlvBridge);
     context.subscriptions.push(connectionStatus);
+
+    // Notebook support (.dtlvnb)
+    context.subscriptions.push(
+        vscode.workspace.registerNotebookSerializer('levin-notebook', new LevinNotebookSerializer())
+    );
+    context.subscriptions.push(new LevinNotebookController(dtlvBridge, outputChannel));
 
     // Load recently opened databases
     loadRecentDatabases(context);
@@ -656,6 +666,41 @@ function registerCommands(context: vscode.ExtensionContext): void {
         })
     );
 
+    // Convert JSON to EDN: replace the selection, or clipboard -> clipboard
+    context.subscriptions.push(
+        vscode.commands.registerCommand('levin.jsonToEdn', async () => {
+            const editor = vscode.window.activeTextEditor;
+            const selection = editor?.selection;
+            const hasSelection = !!editor && !!selection && !selection.isEmpty;
+
+            const input = hasSelection
+                ? editor!.document.getText(selection!)
+                : await vscode.env.clipboard.readText();
+
+            if (!input || input.trim().length === 0) {
+                vscode.window.showWarningMessage('Select some JSON, or copy JSON to the clipboard first');
+                return;
+            }
+
+            let parsed: unknown;
+            try {
+                parsed = JSON.parse(input);
+            } catch (error) {
+                vscode.window.showErrorMessage(`Not valid JSON: ${error instanceof Error ? error.message : error}`);
+                return;
+            }
+
+            const edn = jsonToEdn(parsed);
+
+            if (hasSelection) {
+                await editor!.edit(editBuilder => editBuilder.replace(selection!, edn));
+            } else {
+                await vscode.env.clipboard.writeText(edn);
+                vscode.window.showInformationMessage('EDN copied to clipboard');
+            }
+        })
+    );
+
     // Import Data command
     context.subscriptions.push(
         vscode.commands.registerCommand('levin.importData', async (item?: DatabaseTreeItem) => {
@@ -677,8 +722,8 @@ function registerCommands(context: vscode.ExtensionContext): void {
                 const files = await vscode.window.showOpenDialog({
                     canSelectFiles: true,
                     canSelectMany: false,
-                    filters: { 'EDN Files': ['edn'], 'All Files': ['*'] },
-                    title: 'Select EDN file to import'
+                    filters: { 'Data Files (EDN, JSON)': ['edn', 'json'], 'All Files': ['*'] },
+                    title: 'Select EDN or JSON file to import'
                 });
 
                 if (!files || files.length === 0) { return; }
@@ -692,7 +737,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
                 }
             } else {
                 const url = await vscode.window.showInputBox({
-                    prompt: 'Enter URL to EDN file',
+                    prompt: 'Enter URL to an EDN or JSON file',
                     placeHolder: 'https://example.com/data.edn',
                     validateInput: (value) => {
                         if (!value) { return 'URL is required'; }
@@ -724,23 +769,35 @@ function registerCommands(context: vscode.ExtensionContext): void {
                 title: 'Importing data...',
                 cancellable: false
             }, async () => {
-                // Check content type and handle appropriately
-                const trimmed = ednContent!.trim();
+                let content = ednContent!.trim();
+
+                // JSON imports are converted to EDN first
+                if (looksLikeJson(content)) {
+                    try {
+                        content = jsonToEdn(JSON.parse(content), { format: false });
+                    } catch (error) {
+                        vscode.window.showErrorMessage(
+                            `Failed to convert JSON: ${error instanceof Error ? error.message : error}`
+                        );
+                        return;
+                    }
+                }
+
                 let result;
 
                 // If it starts with { and contains :db/valueType, it's likely Datomic schema format
-                if (trimmed.startsWith('{') && trimmed.includes(':db/valueType')) {
+                if (content.startsWith('{') && content.includes(':db/valueType')) {
                     // Convert and transact Datomic schema in one step
-                    result = await dtlvBridge.transactDatomicSchema(dbPath, trimmed);
+                    result = await dtlvBridge.transactDatomicSchema(dbPath, content);
                 }
                 // If it's a vector with :db/id and negative numbers, it's data with temp IDs
-                else if (trimmed.startsWith('[') && trimmed.includes(':db/id') && /:db\/id\s+-\d/.test(trimmed)) {
+                else if (content.startsWith('[') && content.includes(':db/id') && /:db\/id\s+-\d/.test(content)) {
                     // Use special import method that reopens connection with schema
-                    result = await dtlvBridge.importWithTempIds(dbPath, trimmed);
+                    result = await dtlvBridge.importWithTempIds(dbPath, content);
                 }
                 // Otherwise, normal transact
                 else {
-                    result = await dtlvBridge.transact(dbPath, trimmed);
+                    result = await dtlvBridge.transact(dbPath, content);
                 }
 
                 if (result.success) {
@@ -1609,5 +1666,6 @@ function extractNlqBlockAtLine(
 
 export function deactivate(): void {
     console.log('Levin extension deactivated');
+    dtlvBridge?.dispose();
     nlq.disposeModel();
 }

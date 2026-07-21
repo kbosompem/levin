@@ -31,6 +31,8 @@ export interface QueryStatement {
     rulesText?: string;
     /** Raw text of the :args vector */
     argsText?: string;
+    /** Raw text of the :chart map (notebook chart output) */
+    chartText?: string;
 }
 
 interface MapEntry {
@@ -227,6 +229,9 @@ function classifyForm(text: string, start: number, end: number, lineIndex: numbe
                     break;
                 case ':args':
                     stmt.argsText = raw;
+                    break;
+                case ':chart':
+                    stmt.chartText = raw;
                     break;
             }
         }

@@ -4,8 +4,9 @@
 
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/KwabenaBosompem.levin?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=KwabenaBosompem.levin)
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/KwabenaBosompem.levin)](https://marketplace.visualstudio.com/items?itemName=KwabenaBosompem.levin)
+[![levin-bb engine](https://img.shields.io/github/v/release/kbosompem/babashka?filter=levin-bb-*&label=levin-bb%20engine)](https://github.com/kbosompem/babashka/releases)
 
-**Levin** (archaic English for "lightning") is a VS Code extension that provides a visual interface for [Datalevin](https://github.com/juji-io/datalevin) databases. It communicates directly with the `dtlv` CLI, requiring no REPL or Clojure setup.
+**Levin** (archaic English for "lightning") is a VS Code extension that provides a visual interface for [Datalevin](https://github.com/juji-io/datalevin) databases. It runs on **levin-bb**, a bundled query engine (a custom [babashka](https://github.com/babashka/babashka) build with Datalevin and [core.logic](https://github.com/clojure/core.logic) compiled in) that Levin downloads for you on first run - no REPL, Clojure setup, or separate install required. The `dtlv` CLI works as a fallback backend.
 
 **New here?** Run **Levin: Try Sample Playground** from the Command Palette - one click builds a seeded demo database with five guided query files that teach every feature. See the [User Guide](USER_GUIDE.md) for the full tour.
 
@@ -81,9 +82,21 @@
 code --install-extension KwabenaBosompem.levin
 ```
 
-### 2. Install Datalevin CLI
+### 2. Get a Query Engine
 
-Levin requires the `dtlv` command-line tool to be installed and available in your PATH.
+**levin-bb (recommended, automatic):** on first activation Levin offers to download its bundled engine - a single binary with Datalevin 0.10.18 and core.logic built in (macOS arm64/x64, Linux amd64/arm64). One persistent process serves all queries, so they run in milliseconds instead of paying a process spawn each time. Accept the prompt and you're done; binaries come from [levin-bb releases](https://github.com/kbosompem/babashka/releases).
+
+```json
+// Optional: point at your own copy instead of auto-detection
+{
+  "levin.bbPath": "/path/to/levin-bb"
+}
+```
+
+**dtlv (fallback, and Windows):** Levin also works with the `dtlv` command-line tool on your PATH. This is currently the only backend on Windows.
+
+<details>
+<summary>Installing dtlv</summary>
 
 #### macOS
 
@@ -138,12 +151,15 @@ dtlv --version
 # Should output: Datalevin (version: X.X.X)
 ```
 
+</details>
+
 ### 3. Configure (Optional)
 
-If `dtlv` is not in your PATH, you can specify its location in VS Code settings:
+Backend selection is automatic: `levin.bbPath` setting → downloaded engine → bundled `bin/levin-bb` → `levin-bb` on PATH → `dtlv`. Override either binary's location in VS Code settings:
 
 ```json
 {
+  "levin.bbPath": "/path/to/levin-bb",
   "levin.dtlvPath": "/path/to/dtlv"
 }
 ```
@@ -311,6 +327,7 @@ fetched rows.
 
 ```json
 {
+  "levin.bbPath": "",
   "levin.dtlvPath": "dtlv",
   "levin.queryHistorySize": 100,
   "levin.resultPageSize": 50,
@@ -320,7 +337,8 @@ fetched rows.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `levin.dtlvPath` | `"dtlv"` | Path to dtlv executable |
+| `levin.bbPath` | `""` | Path to the levin-bb engine (empty = auto-detect/download) |
+| `levin.dtlvPath` | `"dtlv"` | Path to dtlv executable (fallback backend) |
 | `levin.queryHistorySize` | `100` | Number of queries to keep in history |
 | `levin.resultPageSize` | `50` | Results per page in table view |
 | `levin.recentDatabases` | `[]` | Auto-populated list of recent databases |
@@ -375,12 +393,12 @@ npm run package
 
 ## Architecture
 
-Levin uses a simple CLI-based architecture:
+Levin keeps the tooling out of your way:
 
-1. **Direct CLI communication** - All database operations execute through the `dtlv` command-line tool
+1. **Bundled engine** - database operations run in one persistent [levin-bb](https://github.com/kbosompem/babashka/releases) process (a custom babashka build with Datalevin + core.logic compiled in), speaking newline-delimited JSON over stdio; warm queries return in milliseconds. With the `dtlv` fallback backend, each operation spawns a fresh CLI process instead.
 2. **No REPL required** - No need for Clojure, Calva, or jack-in workflows
 3. **Local & Remote support** - Works with local databases and remote Datalevin servers
-4. **Stateless** - Each operation is independent
+4. **Independent operations** - each request opens, uses, and releases the database, so nothing is left locked between queries
 
 ## License
 

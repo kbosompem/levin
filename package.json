@@ -2,7 +2,7 @@
   "name": "levin",
   "displayName": "Levin",
   "description": "Browse, query, and manage Datalevin databases in VS Code",
-  "version": "0.8.0",
+  "version": "0.8.5",
   "publisher": "KwabenaBosompem",
   "author": {
     "name": "Kwabena Bosompem"
@@ -97,6 +97,11 @@
       {
         "command": "levin.copyQueryAsClojure",
         "title": "Levin: Copy Query as Clojure"
+      },
+      {
+        "command": "levin.jsonToEdn",
+        "title": "Levin: Convert JSON to EDN",
+        "icon": "$(arrow-swap)"
       },
       {
         "command": "levin.runSavedQuery",
@@ -280,6 +285,37 @@
         "contents": "No queries run yet.\nRun a query with `Ctrl+Enter` from any `.dtlv.edn` file and it will show up here."
       }
     ],
+    "notebooks": [
+      {
+        "type": "levin-notebook",
+        "displayName": "Levin Datalevin Notebook",
+        "selector": [
+          {
+            "filenamePattern": "*.dtlvnb"
+          }
+        ]
+      }
+    ],
+    "notebookRenderer": [
+      {
+        "id": "levin.results-renderer",
+        "displayName": "Levin Results Renderer",
+        "entrypoint": "./resources/notebook-renderer.js",
+        "requiresMessaging": "optional",
+        "mimeTypes": [
+          "application/vnd.levin.results+json"
+        ]
+      },
+      {
+        "id": "levin.chart-renderer",
+        "displayName": "Levin Chart Renderer",
+        "entrypoint": "./resources/chart-renderer.js",
+        "requiresMessaging": "never",
+        "mimeTypes": [
+          "application/vnd.levin.chart+json"
+        ]
+      }
+    ],
     "walkthroughs": [
       {
         "id": "levin.gettingStarted",
@@ -290,13 +326,17 @@
             "id": "levin.playground",
             "title": "Create your sample playground",
             "description": "One click builds a seeded Mini-Northwind database - schema, data, rules, and vector embeddings included - plus five guided `.dtlv.edn` query files that teach every feature.\n[Create the Sample Playground](command:levin.trySampleDatabase)",
-            "completionEvents": ["onCommand:levin.trySampleDatabase"]
+            "completionEvents": [
+              "onCommand:levin.trySampleDatabase"
+            ]
           },
           {
             "id": "levin.firstQuery",
             "title": "Run your first query",
             "description": "In `01-basics.dtlv.edn`, click inside any query and press `Ctrl+Enter` (`Cmd+Enter` on macOS). The play button in the editor title, or the CodeLens above each statement, does the same. `Cmd+Shift+Enter` runs the whole file.\n[Run Query at Cursor](command:levin.runQuery)",
-            "completionEvents": ["onCommand:levin.runQuery"]
+            "completionEvents": [
+              "onCommand:levin.runQuery"
+            ]
           },
           {
             "id": "levin.pin",
@@ -307,31 +347,41 @@
             "id": "levin.entities",
             "title": "Browse and inspect entities",
             "description": "Click any entity id in the results panel to inspect it, or browse every entity in the database.\n[Browse Entities](command:levin.browseEntities)",
-            "completionEvents": ["onCommand:levin.browseEntities"]
+            "completionEvents": [
+              "onCommand:levin.browseEntities"
+            ]
           },
           {
             "id": "levin.relationships",
             "title": "Explore relationships",
             "description": "References are first-class in Datalevin. The `02-relationships` playground file covers joins and pull; this panel draws the graph.\n[View Relationships](command:levin.showRelationships)",
-            "completionEvents": ["onCommand:levin.showRelationships"]
+            "completionEvents": [
+              "onCommand:levin.showRelationships"
+            ]
           },
           {
             "id": "levin.rules",
             "title": "Reuse logic with rules",
             "description": "Rules are named, reusable query clauses stored in the database - the sample ships a recursive org-chart rule. See `03-rules.dtlv.edn`, then manage your own.\n[Manage Rules](command:levin.showRules)",
-            "completionEvents": ["onCommand:levin.showRules"]
+            "completionEvents": [
+              "onCommand:levin.showRules"
+            ]
           },
           {
             "id": "levin.vector",
             "title": "Search by similarity",
             "description": "Every sample product has an embedding, so nearest-neighbor search is one Datalog clause. See `04-vector-search.dtlv.edn`, or use the visual panel.\n[Vector Similarity Search](command:levin.vectorSearch)",
-            "completionEvents": ["onCommand:levin.vectorSearch"]
+            "completionEvents": [
+              "onCommand:levin.vectorSearch"
+            ]
           },
           {
             "id": "levin.transact",
             "title": "Add and shape data",
             "description": "Writes are plain data: run the `:transact` statement in `05-beyond-sql.dtlv.edn`, use the transaction panel, or evolve the schema.\n[Open Transaction Panel](command:levin.showTransactionPanel)\n[Edit Schema](command:levin.editSchema)",
-            "completionEvents": ["onCommand:levin.showTransactionPanel"]
+            "completionEvents": [
+              "onCommand:levin.showTransactionPanel"
+            ]
           },
           {
             "id": "levin.save",
@@ -558,6 +608,11 @@
           "default": "dtlv",
           "description": "Path to dtlv executable (default assumes it's in PATH)"
         },
+        "levin.bbPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the levin-bb binary (custom babashka build with datalevin + core.logic). Empty = auto-detect: bundled bin/levin-bb, then levin-bb on PATH. Falls back to dtlv when not found."
+        },
         "levin.queryHistorySize": {
           "type": "number",
           "default": 100,
@@ -584,7 +639,8 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./ && npm run copy-nlq-scripts",
+    "compile": "tsc -p ./ && npm run copy-nlq-scripts && npm run bundle-chart-renderer",
+    "bundle-chart-renderer": "cat node_modules/vega/build/vega.min.js node_modules/vega-lite/build/vega-lite.min.js node_modules/vega-embed/build/vega-embed.min.js resources/chart-renderer-src.js > resources/chart-renderer.js",
     "copy-nlq-scripts": "mkdir -p out/nlq && cp src/nlq/*.py out/nlq/",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
@@ -606,7 +662,8 @@
     "glob": "^10.3.10",
     "mocha": "^10.2.0",
     "ovsx": "^0.8.3",
-    "typescript": "^5.3.2"
+    "typescript": "^5.3.2",
+    "vega-embed": "^7.1.0"
   },
   "dependencies": {
     "edn-data": "^1.1.2"

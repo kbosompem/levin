@@ -251,6 +251,96 @@ export function playgroundFiles(dbPath: string): PlaygroundFile[] {
 {:transact [{:customer/company-name "New Customer"
             :customer/country "Spain"}]}
 `
+        },
+        {
+            name: '06-charts.dtlvnb',
+            content: chartsNotebook(dbPath)
         }
     ];
+}
+
+interface NotebookCell {
+    cell_type: 'markdown' | 'code';
+    source: string[];
+    metadata: Record<string, unknown>;
+    execution_count?: number | null;
+    outputs?: unknown[];
+}
+
+const mdCell = (text: string): NotebookCell => ({
+    cell_type: 'markdown',
+    source: textToIpynbLines(text),
+    metadata: {}
+});
+
+const codeCell = (source: string): NotebookCell => ({
+    cell_type: 'code',
+    source: textToIpynbLines(source),
+    metadata: {},
+    execution_count: null,
+    outputs: []
+});
+
+function textToIpynbLines(text: string): string[] {
+    const parts = text.split('\n');
+    const lines = parts.map((part, i) => (i < parts.length - 1 ? part + '\n' : part));
+    if (lines.length > 0 && lines[lines.length - 1] === '') {
+        lines.pop();
+    }
+    return lines;
+}
+
+/**
+ * The charts demo notebook: prose cells alternating with :chart statements,
+ * stored as ipynb-compatible JSON (renders on GitHub too).
+ */
+function chartsNotebook(dbPath: string): string {
+    const cells: NotebookCell[] = [
+        mdCell('# Charts\n\nEvery query can draw itself. Add a `:chart` map to any statement and the output becomes a Vega-Lite chart - run the cells below, then use the mime picker on any output to flip between chart and table.'),
+
+        codeCell(`{:db "${dbPath}"
+ :query [:find ?name ?price
+         :where
+         [?p :product/name ?name]
+         [?p :product/unit-price ?price]
+         :order-by [?price :desc]]
+ :chart {:mark :bar :x ?name :y ?price}
+ :limit 50}`),
+
+        mdCell('## Pie (arc)\n\n`:mark :arc` turns x into the color and y into the angle:'),
+
+        codeCell(`{:query [:find ?category (sum ?qty)
+         :keys category qty
+         :where
+         [?d :orderdetail/quantity ?qty]
+         [?d :orderdetail/product ?p]
+         [?p :product/category ?c]
+         [?c :category/name ?category]]
+ :chart {:mark :arc :x ?category :y ?qty}
+ :limit 50}`),
+
+        mdCell('## Anything Vega-Lite can do\n\nPass a raw spec with `:chart {:spec {...}}` - fields reference your column names:'),
+
+        codeCell(`{:query [:find ?name ?price ?stock
+         :where
+         [?p :product/name ?name]
+         [?p :product/unit-price ?price]
+         [?p :product/units-in-stock ?stock]]
+ :chart {:spec {:mark "point"
+                :encoding {:x {:field "stock" :type "quantitative" :title "Units in stock"}
+                           :y {:field "price" :type "quantitative" :title "Unit price"}
+                           :tooltip {:field "name" :type "nominal"}}}}
+ :limit 50}`)
+    ];
+
+    return JSON.stringify({
+        cells,
+        metadata: {
+            levin: {},
+            kernelspec: { name: 'levin', display_name: 'Levin (Datalevin)', language: 'clojure' },
+            language_info: { name: 'clojure' }
+        },
+        nbformat: 4,
+        nbformat_minor: 5
+    }, null, 1) + '\n';
 }

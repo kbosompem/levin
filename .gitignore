@@ -7,6 +7,9 @@ node_modules
 *.log
 .kay/
 
+# Generated at build time (bundle-chart-renderer)
+resources/chart-renderer.js
+
 # Editor/tooling caches
 .clj-kondo/
 .lsp/
@@ -14,3 +17,6 @@ node_modules
 
 # NLQ model (too large to commit - download separately)
 models/
+
+# levin-bb binary (downloaded/copied locally, never committed)
+bin/

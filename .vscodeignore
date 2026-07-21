@@ -28,3 +28,6 @@ levin-spec.md
 
 # Build artifacts
 *.vsix
+
+# local levin-bb binary — users download per-platform from GitHub releases
+bin/**
