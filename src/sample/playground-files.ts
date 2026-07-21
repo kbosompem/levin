@@ -392,9 +392,10 @@ function solveNotebook(dbPath: string): string {
          [?p :product/units-in-stock ?stock]]
  :pick {?qty [0 ?stock]}
  :such-that [[(<= (sum (* ?qty ?price)) 100.0)]]
- :maximize (sum ?qty)}`),
+ :maximize (sum ?qty)
+ :chart {:mark :bar :x ?name :y ?buy}}`),
 
-        mdCell('The `?buy` column says how many of each; the header shows the objective and exact spend. Swap the objective for profit - expressions nest freely: `:maximize (sum (* ?qty (- 30.0 ?price)))`. `:maximize`/`:minimize` also work with plain `:pick 3` to rank bundles instead of returning the first found.'),
+        mdCell('The `?buy` column says how many of each; the header shows the objective and exact spend - and `:chart` composes with `:solve` just like with `:query`, so the buying plan above draws itself as a bar chart (flip to the table with the mime picker). Swap the objective for profit - expressions nest freely: `:maximize (sum (* ?qty (- 30.0 ?price)))`. `:maximize`/`:minimize` also work with plain `:pick 3` to rank bundles instead of returning the first found.'),
 
         mdCell(`## The vocabulary
 

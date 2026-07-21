@@ -191,7 +191,21 @@ export class LevinNotebookController implements vscode.Disposable {
         // rich table renderer derives the same columns the solver returns
         const syntheticQuery = `[:find ?solution ${(data.findVars ?? []).join(' ')} :where]`;
 
-        await execution.appendOutput([new vscode.NotebookCellOutput([
+        const items: vscode.NotebookCellOutputItem[] = [];
+
+        // :chart composes with :solve exactly as with :query - the chart
+        // leads, the table stays one mime-picker away
+        if (stmt.chartText) {
+            const spec = buildChartSpec(stmt.chartText, syntheticQuery, result.data);
+            if (spec) {
+                items.push(new vscode.NotebookCellOutputItem(
+                    Buffer.from(JSON.stringify(spec)),
+                    CHART_MIME
+                ));
+            }
+        }
+
+        items.push(
             new vscode.NotebookCellOutputItem(
                 Buffer.from(JSON.stringify(buildResultsPayload(result.data, syntheticQuery, dbPath))),
                 RESULTS_MIME
@@ -201,7 +215,9 @@ export class LevinNotebookController implements vscode.Disposable {
                 'application/json'
             ),
             vscode.NotebookCellOutputItem.text(`${header}\n${toEdn(rows)}`, 'text/plain')
-        ])]);
+        );
+
+        await execution.appendOutput([new vscode.NotebookCellOutput(items)]);
         return true;
     }
 
