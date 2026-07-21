@@ -383,7 +383,28 @@ function solveNotebook(dbPath: string): string {
              [(<= (gap ?price) 10.0)]]
  :limit 3}`),
 
+        mdCell('## Optimize, don\'t just satisfy\n\nGive `:pick` a **quantity variable** and add `:maximize`, and solve becomes a buying plan: *"I have $100 - how many of each product should I buy to maximize units on the shelf?"* Solved exactly (bounded knapsack), not greedily:'),
+
+        codeCell(`{:solve [:find ?name ?price ?stock
+         :where
+         [?p :product/name ?name]
+         [?p :product/unit-price ?price]
+         [?p :product/units-in-stock ?stock]]
+ :pick {?qty [0 ?stock]}
+ :such-that [[(<= (sum (* ?qty ?price)) 100.0)]]
+ :maximize (sum ?qty)}`),
+
+        mdCell('The `?buy` column says how many of each; the header shows the objective and exact spend. Swap the objective for profit - expressions nest freely: `:maximize (sum (* ?qty (- 30.0 ?price)))`. `:maximize`/`:minimize` also work with plain `:pick 3` to rank bundles instead of returning the first found.'),
+
         mdCell(`## The vocabulary
+
+| key | meaning |
+|---|---|
+| \`:pick n\` | choose n rows |
+| \`:pick {?q [lo hi]}\` | choose a quantity of each row (bounds: numbers or row vars) |
+| \`:such-that [...]\` | constraints (below) |
+| \`:maximize\` / \`:minimize\` | objective, e.g. \`(sum (* ?q ?price))\` |
+| \`:limit\` | max solutions returned (default 5) |
 
 | constraint | meaning |
 |---|---|
@@ -392,7 +413,7 @@ function solveNotebook(dbPath: string): string {
 | \`[(< (sum ?v) n)]\` | predicate over an aggregate: \`sum\` \`max\` \`min\` \`avg\` \`gap\` \`count\` |
 | \`[(< ?v n)]\` | bare \`?v\`: predicate must hold for every picked row |
 
-Predicates: \`<\` \`<=\` \`>\` \`>=\` \`=\` \`not=\`. \`:limit\` caps how many solutions you get back (default 5). An empty result means no pick satisfies the constraints - itself an answer.`)
+Predicates: \`<\` \`<=\` \`>\` \`>=\` \`=\` \`not=\`; expressions may nest \`+ - * / min max\`. An empty result means no pick satisfies the constraints - itself an answer.`)
     ];
 
     return JSON.stringify({

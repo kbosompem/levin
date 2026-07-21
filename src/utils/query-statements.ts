@@ -39,6 +39,10 @@ export interface QueryStatement {
     pickText?: string;
     /** Raw text of the :such-that constraint vector */
     suchThatText?: string;
+    /** Raw text of the :maximize objective expression */
+    maximizeText?: string;
+    /** Raw text of the :minimize objective expression */
+    minimizeText?: string;
 }
 
 interface MapEntry {
@@ -247,6 +251,12 @@ function classifyForm(text: string, start: number, end: number, lineIndex: numbe
                     break;
                 case ':such-that':
                     stmt.suchThatText = raw;
+                    break;
+                case ':maximize':
+                    stmt.maximizeText = raw;
+                    break;
+                case ':minimize':
+                    stmt.minimizeText = raw;
                     break;
             }
         }

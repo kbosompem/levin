@@ -61,6 +61,8 @@ export class QueryCompletionProvider implements vscode.CompletionItemProvider {
             { name: 'solve', detail: 'Pick rows under constraints', snippet: 'solve [:find $0 :where ]' },
             { name: 'pick', detail: 'How many rows a :solve chooses', snippet: 'pick ${1:3}' },
             { name: 'such-that', detail: 'Constraints for :solve ([:distinct ?v], [(< (sum ?v) n)])', snippet: 'such-that [$0]' },
+            { name: 'maximize', detail: 'Objective for :solve, e.g. (sum (* ?qty ?price))', snippet: 'maximize (sum $0)' },
+            { name: 'minimize', detail: 'Objective for :solve (subset mode)', snippet: 'minimize (sum $0)' },
         ];
 
         return keywords.map(kw => {

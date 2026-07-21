@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aggregates or per-row values). Results render in the normal table with a
   `?solution` column grouping each answer; `:limit` caps solutions (default 5).
   Works on both backends. The sample playground gains `07-solve.dtlvnb`.
+- **`:solve` optimization** - `:maximize`/`:minimize (sum <expr>)` ranks
+  subset solutions by an objective, and `:pick {?qty [lo hi]}` turns a solve
+  into an exact buying plan: *"with $100, what quantities maximize the
+  objective?"* - one budget constraint `[(<= (sum (* ?qty <cost>)) n)]`,
+  bounds from numbers or row variables (`[0 ?stock]`), solved exactly with
+  bounded-knapsack DP in integer cents. Expressions nest `+ - * / min max`.
+  Output includes the objective, exact spend, and a `?buy` quantity column.
 
 ## [0.8.5] - 2026-07-21
 

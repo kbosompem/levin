@@ -1411,6 +1411,8 @@ async function executeSolve(dbPath: string, stmt: QueryStatement): Promise<boole
             solveText: stmt.solveText!,
             pickText: stmt.pickText,
             suchThatText: stmt.suchThatText,
+            maximizeText: stmt.maximizeText,
+            minimizeText: stmt.minimizeText,
             limit: stmt.limit
         });
 

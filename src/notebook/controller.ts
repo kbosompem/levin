@@ -161,6 +161,8 @@ export class LevinNotebookController implements vscode.Disposable {
             solveText: stmt.solveText!,
             pickText: stmt.pickText,
             suchThatText: stmt.suchThatText,
+            maximizeText: stmt.maximizeText,
+            minimizeText: stmt.minimizeText,
             limit: stmt.limit
         });
 
@@ -169,12 +171,21 @@ export class LevinNotebookController implements vscode.Disposable {
             return false;
         }
 
-        const data = (result.data ?? {}) as RunResults & { findVars?: string[] };
+        const data = (result.data ?? {}) as RunResults & {
+            findVars?: string[];
+            summary?: { objective?: number; spent?: number; budget?: number };
+        };
         const rows = data.results ?? [];
         const solutions = data.total ?? 0;
-        const header = data.truncated
+        let header = data.truncated
             ? `${solutions} solutions shown (more exist)`
             : `${solutions} solution${solutions === 1 ? '' : 's'}`;
+        if (data.summary?.objective !== undefined) {
+            header += ` · objective ${data.summary.objective}`;
+            if (data.summary.spent !== undefined) {
+                header += `, spent ${data.summary.spent} of ${data.summary.budget}`;
+            }
+        }
 
         // Synthesize a :find clause (?solution + the query's vars) so the
         // rich table renderer derives the same columns the solver returns

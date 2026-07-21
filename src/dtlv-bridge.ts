@@ -1057,85 +1057,245 @@ export class DtlvBridge {
     }
 
     /**
-     * Execute a :solve statement: run the query, then pick `pick` rows
-     * satisfying every :such-that constraint. Declarative constraints:
-     *   [:distinct ?v]          picked values of ?v all differ
-     *   [:same ?v]              picked values of ?v all equal
-     *   [(< (sum ?v) 30)]       predicate over aggregates: sum/max/min/avg/gap/count
-     *   [(< ?v 20)]             bare ?v = predicate applies to every picked row
-     * Returns {:total :truncated :find-vars :results} where each result row is
-     * [solution-number & row], so existing table rendering works unchanged.
+     * Execute a :solve statement: run the query, then pick rows satisfying
+     * every :such-that constraint, optionally optimizing an objective.
+     *
+     * Subset mode - :pick <n> chooses n rows:
+     *   [:distinct ?v]            picked values of ?v all differ
+     *   [:same ?v]                picked values of ?v all equal
+     *   [(< (sum ?v) 30)]         predicate over sum/max/min/avg/gap/count
+     *   [(< ?v 20)]               bare ?v = predicate holds for every picked row
+     *   :maximize/:minimize (sum <expr>) ranks solutions by the objective
+     *
+     * Quantity mode - :pick {?qty [lo hi]} chooses how many of EACH row
+     * (bounds are numbers or row variables), requires :maximize and exactly
+     * one budget constraint [(<= (sum (* ?qty <cost>)) <number>)]. Solved
+     * exactly via bounded-knapsack DP in integer cents. Expressions allow
+     * nested + - * / min max over row variables and literals.
+     *
+     * Returns {:total :truncated :findVars :summary :results}; result rows are
+     * [solution-number & row] (quantity mode: [1 qty & row] with ?buy first),
+     * so existing table rendering works unchanged.
      */
     async solve(dbPath: string, stmt: {
-        solveText: string; pickText?: string; suchThatText?: string; limit?: number;
+        solveText: string; pickText?: string; suchThatText?: string;
+        maximizeText?: string; minimizeText?: string; limit?: number;
     }): Promise<QueryResult> {
-        const pick = parseInt(stmt.pickText ?? '', 10);
-        if (isNaN(pick) || pick < 1) {
-            return { success: false, error: 'A :solve statement needs :pick <n> (how many rows to choose).' };
+        const pickText = (stmt.pickText ?? '').trim();
+        if (!pickText) {
+            return {
+                success: false,
+                error: 'A :solve statement needs :pick — a count (:pick 3) or a quantity variable (:pick {?qty [0 ?stock]}).'
+            };
+        }
+        if (stmt.maximizeText && stmt.minimizeText) {
+            return { success: false, error: 'Use :maximize or :minimize, not both.' };
         }
         const limit = stmt.limit ?? 5;
         const constraints = stmt.suchThatText ?? '[]';
+        const objective = stmt.maximizeText ?? stmt.minimizeText ?? 'nil';
+        const minimize = stmt.minimizeText ? 'true' : 'false';
 
         const code = `
             (let [q '${stmt.solveText}
                   cs '${constraints}
-                  pick ${pick}
+                  pick '${pickText}
                   lim ${limit}
+                  objective '${objective}
+                  minimize? ${minimize}
                   fvars (vec (take-while symbol? (rest q)))
-                  rows (vec (datalevin.core/q q @conn))
-                  _ (when (> (count rows) 400)
-                      (throw (ex-info (str "Too many candidates for :solve (" (count rows)
-                                           "); narrow the query with :where clauses") {})))
+                  all-rows (vec (datalevin.core/q q @conn))
                   col (zipmap fvars (range))
                   pvar? (fn [x] (and (symbol? x) (clojure.string/starts-with? (name x) "?")))
-                  vals-of (fn [sel v]
-                            (if-not (contains? col v)
-                              (throw (ex-info (str "Unknown variable " v " in :such-that") {}))
-                              (mapv #(nth % (col v)) sel)))
-                  agg (fn [sel [f v]]
-                        (case f
-                          sum   (reduce + (vals-of sel v))
-                          max   (apply max (vals-of sel v))
-                          min   (apply min (vals-of sel v))
-                          avg   (/ (reduce + (vals-of sel v)) (double (count sel)))
-                          gap   (- (apply max (vals-of sel v)) (apply min (vals-of sel v)))
-                          count (count sel)
-                          (throw (ex-info (str "Unknown aggregate " f " (use sum/max/min/avg/gap/count)") {}))))
+                  arith {'+ + '- - '* * '/ / 'min min 'max max}
+                  agg? (fn [e] (and (seq? e) ('#{sum max min avg gap count} (first e))))
+                  eval-row (fn eval-row [row e]
+                             (cond
+                               (number? e) e
+                               (pvar? e) (if (contains? col e)
+                                           (nth row (col e))
+                                           (throw (ex-info (str "Unknown variable " e) {})))
+                               (and (seq? e) (arith (first e)))
+                               (apply (arith (first e)) (map #(eval-row row %) (rest e)))
+                               (seq? e) (throw (ex-info (str "Unknown operator " (first e)
+                                                             " (use + - * / min max)") {}))
+                               :else e))
+                  eval-agg (fn [sel [f e]]
+                             (let [vs (when e (mapv #(eval-row % e) sel))]
+                               (case f
+                                 sum   (reduce + vs)
+                                 max   (apply max vs)
+                                 min   (apply min vs)
+                                 avg   (/ (reduce + vs) (double (count sel)))
+                                 gap   (- (apply max vs) (apply min vs))
+                                 count (count sel)
+                                 (throw (ex-info (str "Unknown aggregate " f
+                                                      " (use sum/max/min/avg/gap/count)") {})))))
                   ops {'< < '<= <= '> > '>= >= '= = 'not= not=}
-                  ok? (fn [sel c]
-                        (cond
-                          (= :distinct (first c)) (apply distinct? (vals-of sel (second c)))
-                          (= :same (first c))     (apply = (vals-of sel (second c)))
-                          (seq? (first c))
-                          (let [[op & args] (first c)
-                                f (or (ops op)
-                                      (throw (ex-info (str "Unknown predicate " op " (use < <= > >= = not=)") {})))]
-                            (if (some pvar? args)
-                              (every? (fn [row]
-                                        (apply f (map #(cond (pvar? %) (nth row (col %))
-                                                             (seq? %) (agg sel %)
-                                                             :else %)
-                                                      args)))
-                                      sel)
-                              (apply f (map #(if (seq? %) (agg sel %) %) args))))
-                          :else (throw (ex-info (str "Unknown constraint " (pr-str c)) {}))))
-                  combos (fn combos [start k]
-                           (if (zero? k)
-                             '(())
-                             (for [i (range start (count rows))
-                                   t (combos (inc i) (dec k))]
-                               (cons i t))))
-                  sols (->> (combos 0 pick)
-                            (map (fn [is] (mapv rows is)))
-                            (filter (fn [sel] (every? #(ok? sel %) cs)))
-                            (take (inc lim)))
-                  shown (vec (take lim sols))]
-              {:total (count shown)
-               :truncated (> (count sols) lim)
-               :findVars (mapv name fvars)
-               :results (vec (for [[i sel] (map-indexed vector shown)
-                                   row sel]
-                               (into [(inc i)] row)))})
+                  has-row-var? (fn hrv [e] (cond (pvar? e) true
+                                                 (agg? e) false
+                                                 (seq? e) (boolean (some hrv (rest e)))
+                                                 :else false))
+                  holds? (fn [sel c]
+                           (cond
+                             (= :distinct (first c)) (apply distinct? (mapv #(eval-row % (second c)) sel))
+                             (= :same (first c))     (apply = (mapv #(eval-row % (second c)) sel))
+                             (seq? (first c))
+                             (let [[op & args] (first c)
+                                   f (or (ops op)
+                                         (throw (ex-info (str "Unknown predicate " op
+                                                              " (use < <= > >= = not=)") {})))]
+                               (if (some has-row-var? args)
+                                 (every? (fn [row]
+                                           (apply f (map #(if (agg? %) (eval-agg sel %) (eval-row row %)) args)))
+                                         sel)
+                                 (apply f (map #(if (agg? %) (eval-agg sel %) (eval-row nil %)) args))))
+                             :else (throw (ex-info (str "Unknown constraint " (pr-str c)) {}))))
+
+                  subset-solve
+                  (fn []
+                    (let [k pick
+                          _ (when (> (count all-rows) 400)
+                              (throw (ex-info (str "Too many candidates for :solve (" (count all-rows)
+                                                   "); narrow the query with :where clauses") {})))
+                          combos (fn combos [start k]
+                                   (if (zero? k)
+                                     '(())
+                                     (for [i (range start (count all-rows))
+                                           t (combos (inc i) (dec k))]
+                                       (cons i t))))
+                          sels (->> (combos 0 k)
+                                    (map (fn [is] (mapv all-rows is)))
+                                    (filter (fn [sel] (every? #(holds? sel %) cs))))]
+                      (if objective
+                        (let [scored (sort-by second (if minimize? < >)
+                                              (map (fn [sel] [sel (double (eval-agg sel objective))]) sels))
+                              shown (vec (take lim scored))]
+                          {:total (count shown)
+                           :truncated (> (count scored) (count shown))
+                           :findVars (mapv name fvars)
+                           :summary {:objective (second (first shown))}
+                           :results (vec (for [[i [sel _]] (map-indexed vector shown)
+                                               row sel]
+                                           (into [(inc i)] row)))})
+                        (let [sols (take (inc lim) sels)
+                              shown (vec (take lim sols))]
+                          {:total (count shown)
+                           :truncated (> (count sols) lim)
+                           :findVars (mapv name fvars)
+                           :results (vec (for [[i sel] (map-indexed vector shown)
+                                               row sel]
+                                           (into [(inc i)] row)))}))))
+
+                  quantity-solve
+                  (fn []
+                    (let [[qv bounds] (first pick)
+                          _ (when-not (and (= 1 (count pick)) (pvar? qv) (vector? bounds) (= 2 (count bounds)))
+                              (throw (ex-info ":pick map must be {?qty [lo hi]} with numbers or row variables as bounds" {})))
+                          _ (when-not objective
+                              (throw (ex-info "A quantity :solve needs :maximize (what to optimize)" {})))
+                          _ (when minimize?
+                              (throw (ex-info "Quantity solves support :maximize only" {})))
+                          [lo-e hi-e] bounds
+                          unit-of (fn [X]
+                                    (cond
+                                      (= X qv) 1
+                                      (and (seq? X) (= '* (first X)) (some #{qv} (rest X)))
+                                      (let [others (remove #{qv} (rest X))]
+                                        (if (= 1 (count others)) (first others) (cons '* others)))
+                                      :else (throw (ex-info (str "Expected " qv " times a per-unit expression, got "
+                                                                 (pr-str X)) {}))))
+                          budget? (fn [c] (and (seq? (first c))
+                                               (let [[op a b] (first c)]
+                                                 (and (= op '<=) (number? b) (seq? a) (= 'sum (first a))))))
+                          budgets (filterv budget? cs)
+                          extras (filterv (complement budget?) cs)
+                          _ (when (not= 1 (count budgets))
+                              (throw (ex-info "A quantity :solve needs exactly one budget constraint: [(<= (sum (* ?qty <cost>)) <number>)]" {})))
+                          _ (doseq [c extras]
+                              (when (or (not (seq? (first c))) (has-row-var? (second (first c))) false)
+                                nil)
+                              (when (some #(= qv %) (flatten [c]))
+                                (throw (ex-info (str "Extra constraints cannot mention " qv
+                                                     "; use them to filter candidate rows") {}))))
+                          row-ok? (fn [row]
+                                    (every? (fn [c]
+                                              (let [[op & args] (first c)
+                                                    f (or (ops op) (throw (ex-info (str "Unknown predicate " op) {})))]
+                                                (apply f (map #(eval-row row %) args))))
+                                            extras))
+                          rows (vec (filter row-ok? all-rows))
+                          _ (when (> (count rows) 100)
+                              (throw (ex-info (str "Too many candidates for a quantity :solve (" (count rows)
+                                                   "); narrow the query") {})))
+                          [_ bsum budget] (first (first budgets))
+                          cost-e (unit-of (second bsum))
+                          value-e (unit-of (second objective))
+                          _ (when-not (= 'sum (first objective))
+                              (throw (ex-info ":maximize must be (sum ...) in a quantity solve" {})))
+                          B (long (Math/round (* 100.0 (double budget))))
+                          items (vec (mapcat
+                                      (fn [ri]
+                                        (let [row (rows ri)
+                                              lo (long (eval-row row lo-e))
+                                              hi (long (eval-row row hi-e))
+                                              w (long (Math/round (* 100.0 (double (eval-row row cost-e)))))
+                                              v (double (eval-row row value-e))]
+                                          (when (pos? (- hi lo))
+                                            (when-not (pos? w)
+                                              (throw (ex-info (str "Per-unit cost must be positive for row " (rows ri)) {})))
+                                            nil)
+                                          ;; binary-split the 0..(hi-lo) count into pseudo-items
+                                          (loop [n (- hi lo) m 1 acc []]
+                                            (if (pos? n)
+                                              (let [take-m (min m n)]
+                                                (recur (- n take-m) (* 2 m)
+                                                       (conj acc [ri take-m (* take-m w) (* take-m v)])))
+                                              acc))))
+                                      (range (count rows))))
+                          _ (when (> (* (inc (count items)) (inc B)) 6000000)
+                              (throw (ex-info (str "Search space too large (budget " budget " x " (count rows)
+                                                   " products); lower the budget or narrow the query") {})))
+                          ;; mandatory lo quantities are bought up front
+                          base-qty (mapv (fn [row] (long (eval-row row lo-e))) rows)
+                          base-cost (reduce + (map (fn [row lo] (* lo (Math/round (* 100.0 (double (eval-row row cost-e))))))
+                                                   rows base-qty))
+                          _ (when (> base-cost B)
+                              (throw (ex-info "The minimum quantities alone exceed the budget" {})))
+                          B' (- B base-cost)
+                          dp (vec (repeatedly (inc (count items)) #(double-array (inc B'))))
+                          _ (doseq [i (range 1 (inc (count items)))]
+                              (let [prev (dp (dec i))
+                                    cur  (dp i)
+                                    [_ _ wi vi] (items (dec i))]
+                                (dotimes [w (inc B')]
+                                  (aset cur w (double (if (>= w wi)
+                                                        (max (aget prev w)
+                                                             (+ (aget prev (- w wi)) vi))
+                                                        (aget prev w)))))))
+                          ;; walk back through the table to recover quantities
+                          qty (loop [i (count items) w (long B') acc base-qty]
+                                (if (zero? i)
+                                  acc
+                                  (let [[ri _ wi vi] (items (dec i))]
+                                    (if (> (aget (dp i) w) (+ (aget (dp (dec i)) w) 1e-9))
+                                      (recur (dec i) (- w wi) (update acc ri + (second (items (dec i)))))
+                                      (recur (dec i) w acc)))))
+                          spent (reduce + (map (fn [row n] (* n (double (eval-row row cost-e)))) rows qty))
+                          value (reduce + (map (fn [row n] (* n (double (eval-row row value-e)))) rows qty))
+                          bought (->> (map vector qty rows)
+                                      (filter (fn [[n _]] (pos? n)))
+                                      (sort-by first >))]
+                      {:total (count bought)
+                       :truncated false
+                       :findVars (into ["?buy"] (map name fvars))
+                       :summary {:objective value :spent spent :budget (double budget)}
+                       :results (vec (for [[n row] bought] (into [1 n] row)))}))]
+
+              (cond
+                (map? pick) (quantity-solve)
+                (and (integer? pick) (pos? pick)) (subset-solve)
+                :else (throw (ex-info ":pick must be a positive count or {?qty [lo hi]}" {}))))
         `.trim();
 
         return this.runCode(dbPath, code);
