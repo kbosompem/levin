@@ -2,8 +2,8 @@
 
 > Browse, query, and manage Datalevin databases in VS Code
 
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/KwabenaBosompem.levin?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=KwabenaBosompem.levin)
-[![Installs](https://img.shields.io/visual-studio-marketplace/i/KwabenaBosompem.levin)](https://marketplace.visualstudio.com/items?itemName=KwabenaBosompem.levin)
+[![VS Code Marketplace](https://vsmarketplacebadges.dev/version-short/KwabenaBosompem.levin.svg)](https://marketplace.visualstudio.com/items?itemName=KwabenaBosompem.levin)
+[![Installs](https://vsmarketplacebadges.dev/installs-short/KwabenaBosompem.levin.svg)](https://marketplace.visualstudio.com/items?itemName=KwabenaBosompem.levin)
 [![levin-bb engine](https://img.shields.io/github/v/release/kbosompem/babashka?filter=levin-bb-*&label=levin-bb%20engine)](https://github.com/kbosompem/babashka/releases)
 
 **Levin** (archaic English for "lightning") is a VS Code extension that provides a visual interface for [Datalevin](https://github.com/juji-io/datalevin) databases. It runs on **levin-bb**, a bundled query engine (a custom [babashka](https://github.com/babashka/babashka) build with Datalevin and [core.logic](https://github.com/clojure/core.logic) compiled in) that Levin downloads for you on first run - no REPL, Clojure setup, or separate install required. The `dtlv` CLI works as a fallback backend.
