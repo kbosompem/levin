@@ -406,6 +406,8 @@ function solveNotebook(dbPath: string): string {
 | \`:such-that [...]\` | constraints (below) |
 | \`:maximize\` / \`:minimize\` | objective, e.g. \`(sum (* ?q ?price))\` |
 | \`:limit\` | max solutions returned (default 5) |
+| \`:rules\` / \`:args\` | stored rules for \`%\` and extra \`:in\` inputs - same as \`:query\` |
+| \`:chart\` | draw the solution - same as \`:query\` |
 
 | constraint | meaning |
 |---|---|

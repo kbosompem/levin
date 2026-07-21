@@ -1080,7 +1080,7 @@ export class DtlvBridge {
     async solve(dbPath: string, stmt: {
         solveText: string; pickText?: string; suchThatText?: string;
         maximizeText?: string; minimizeText?: string; limit?: number;
-    }): Promise<QueryResult> {
+    }, inputs?: { rules?: string[] | 'all'; args?: string[] }): Promise<QueryResult> {
         const pickText = (stmt.pickText ?? '').trim();
         if (!pickText) {
             return {
@@ -1096,15 +1096,39 @@ export class DtlvBridge {
         const objective = stmt.maximizeText ?? stmt.minimizeText ?? 'nil';
         const minimize = stmt.minimizeText ? 'true' : 'false';
 
+        // Stored rules (for %) and extra :in inputs - same plumbing as runQuery
+        const argsEdn = inputs?.args?.length ? ' ' + inputs.args.join(' ') : '';
+        let queryInputs = `@conn${argsEdn}`;
+        let rulesBinding = '';
+        if (inputs?.rules) {
+            const named = inputs.rules !== 'all';
+            const bodiesQuery = named
+                ? `[:find ?body
+                    :in $ [?name ...]
+                    :where
+                    [?e :levin.rule/name ?name]
+                    [?e :levin.rule/body ?body]]`
+                : `[:find ?body
+                    :where
+                    [?e :levin.rule/body ?body]]`;
+            const namesEdn = named
+                ? ' [' + (inputs.rules as string[]).map(n => `"${this.escapeString(n)}"`).join(' ') + ']'
+                : '';
+            rulesBinding = `
+                  rule-bodies (datalevin.core/q '${bodiesQuery} @conn${namesEdn})
+                  rules (->> rule-bodies (map first) (map read-string) (apply concat) vec)`;
+            queryInputs = `@conn rules${argsEdn}`;
+        }
+
         const code = `
-            (let [q '${stmt.solveText}
+            (let [q '${stmt.solveText}${rulesBinding}
                   cs '${constraints}
                   pick '${pickText}
                   lim ${limit}
                   objective '${objective}
                   minimize? ${minimize}
                   fvars (vec (take-while symbol? (rest q)))
-                  all-rows (vec (datalevin.core/q q @conn))
+                  all-rows (vec (datalevin.core/q q ${queryInputs}))
                   col (zipmap fvars (range))
                   pvar? (fn [x] (and (symbol? x) (clojure.string/starts-with? (name x) "?")))
                   arith {'+ + '- - '* * '/ / 'min min 'max max}

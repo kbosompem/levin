@@ -164,6 +164,9 @@ export class LevinNotebookController implements vscode.Disposable {
             maximizeText: stmt.maximizeText,
             minimizeText: stmt.minimizeText,
             limit: stmt.limit
+        }, {
+            rules: stmt.rulesText ? parseRulesSpec(stmt.rulesText) : undefined,
+            args: stmt.argsText ? splitEdnVector(stmt.argsText) : undefined
         });
 
         if (!result.success) {

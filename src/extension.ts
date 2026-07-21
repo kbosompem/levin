@@ -1414,6 +1414,9 @@ async function executeSolve(dbPath: string, stmt: QueryStatement): Promise<boole
             maximizeText: stmt.maximizeText,
             minimizeText: stmt.minimizeText,
             limit: stmt.limit
+        }, {
+            rules: stmt.rulesText ? parseRulesSpec(stmt.rulesText) : undefined,
+            args: stmt.argsText ? splitEdnVector(stmt.argsText) : undefined
         });
 
         if (!resultsPanel) {

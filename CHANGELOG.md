@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bounds from numbers or row variables (`[0 ?stock]`), solved exactly with
   bounded-knapsack DP in integer cents. Expressions nest `+ - * / min max`.
   Output includes the objective, exact spend, and a `?buy` quantity column.
+  `:chart`, `:rules`, and `:args` compose with `:solve` exactly as with
+  `:query` - chart the solution, use stored rules for `%`, parameterize
+  the candidate query with extra `:in` inputs.
 
 ## [0.8.5] - 2026-07-21
 
