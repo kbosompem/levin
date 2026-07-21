@@ -7,7 +7,7 @@
  * Pure text processing - no vscode imports, so it is unit-testable.
  */
 
-export type StatementKind = 'query' | 'transact' | 'nlq' | 'bare-query' | 'other';
+export type StatementKind = 'query' | 'transact' | 'solve' | 'nlq' | 'bare-query' | 'other';
 
 export interface QueryStatement {
     kind: StatementKind;
@@ -33,6 +33,12 @@ export interface QueryStatement {
     argsText?: string;
     /** Raw text of the :chart map (notebook chart output) */
     chartText?: string;
+    /** Raw text of the :solve query vector (pick-under-constraints statement) */
+    solveText?: string;
+    /** Raw text of :pick (how many rows to choose) */
+    pickText?: string;
+    /** Raw text of the :such-that constraint vector */
+    suchThatText?: string;
 }
 
 interface MapEntry {
@@ -79,7 +85,7 @@ export function parseStatements(text: string): QueryStatement[] {
  * Whether the statement can be executed (has a query or transaction body).
  */
 export function isRunnable(stmt: QueryStatement): boolean {
-    return stmt.queryText !== undefined || stmt.transactText !== undefined;
+    return stmt.queryText !== undefined || stmt.transactText !== undefined || stmt.solveText !== undefined;
 }
 
 /**
@@ -233,6 +239,15 @@ function classifyForm(text: string, start: number, end: number, lineIndex: numbe
                 case ':chart':
                     stmt.chartText = raw;
                     break;
+                case ':solve':
+                    stmt.solveText = raw;
+                    break;
+                case ':pick':
+                    stmt.pickText = raw;
+                    break;
+                case ':such-that':
+                    stmt.suchThatText = raw;
+                    break;
             }
         }
 
@@ -242,6 +257,8 @@ function classifyForm(text: string, start: number, end: number, lineIndex: numbe
             stmt.kind = 'query';
         } else if (keys.has(':transact')) {
             stmt.kind = 'transact';
+        } else if (keys.has(':solve')) {
+            stmt.kind = 'solve';
         }
     } else if (opener === '[') {
         // Bare query vector, e.g. [:find ?e :where ...]

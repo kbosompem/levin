@@ -68,7 +68,7 @@ export class LevinNotebookController implements vscode.Disposable {
             const runnable = statements.filter(isRunnable);
 
             if (runnable.length === 0) {
-                await execution.replaceOutput([errorOutput('This cell has no :query or :transact statement.')]);
+                await execution.replaceOutput([errorOutput('This cell has no :query, :transact, or :solve statement.')]);
                 execution.end(false, Date.now());
                 return;
             }
@@ -85,7 +85,9 @@ export class LevinNotebookController implements vscode.Disposable {
             for (const stmt of runnable) {
                 const ok = stmt.transactText
                     ? await this.runTransaction(execution, dbPath, stmt)
-                    : await this.runQuery(execution, dbPath, stmt);
+                    : stmt.solveText
+                        ? await this.runSolve(execution, dbPath, stmt)
+                        : await this.runQuery(execution, dbPath, stmt);
                 if (!ok) {
                     execution.end(false, Date.now());
                     return;
@@ -147,6 +149,48 @@ export class LevinNotebookController implements vscode.Disposable {
         );
 
         await execution.appendOutput([new vscode.NotebookCellOutput(items)]);
+        return true;
+    }
+
+    private async runSolve(
+        execution: vscode.NotebookCellExecution,
+        dbPath: string,
+        stmt: QueryStatement
+    ): Promise<boolean> {
+        const result = await this.bridge.solve(dbPath, {
+            solveText: stmt.solveText!,
+            pickText: stmt.pickText,
+            suchThatText: stmt.suchThatText,
+            limit: stmt.limit
+        });
+
+        if (!result.success) {
+            await execution.appendOutput([errorOutput(result.error ?? 'Unknown error')]);
+            return false;
+        }
+
+        const data = (result.data ?? {}) as RunResults & { findVars?: string[] };
+        const rows = data.results ?? [];
+        const solutions = data.total ?? 0;
+        const header = data.truncated
+            ? `${solutions} solutions shown (more exist)`
+            : `${solutions} solution${solutions === 1 ? '' : 's'}`;
+
+        // Synthesize a :find clause (?solution + the query's vars) so the
+        // rich table renderer derives the same columns the solver returns
+        const syntheticQuery = `[:find ?solution ${(data.findVars ?? []).join(' ')} :where]`;
+
+        await execution.appendOutput([new vscode.NotebookCellOutput([
+            new vscode.NotebookCellOutputItem(
+                Buffer.from(JSON.stringify(buildResultsPayload(result.data, syntheticQuery, dbPath))),
+                RESULTS_MIME
+            ),
+            new vscode.NotebookCellOutputItem(
+                Buffer.from(JSON.stringify(result.data)),
+                'application/json'
+            ),
+            vscode.NotebookCellOutputItem.text(`${header}\n${toEdn(rows)}`, 'text/plain')
+        ])]);
         return true;
     }
 

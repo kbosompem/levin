@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`:solve` statements** - declarative pick-under-constraints, in notebooks
+  and `.dtlv.edn` files: `:solve` holds a datalog query, `:pick n` chooses n
+  of its rows, `:such-that` constrains the chosen set (`[:distinct ?v]`,
+  `[:same ?v]`, and predicates over `sum`/`max`/`min`/`avg`/`gap`/`count`
+  aggregates or per-row values). Results render in the normal table with a
+  `?solution` column grouping each answer; `:limit` caps solutions (default 5).
+  Works on both backends. The sample playground gains `07-solve.dtlvnb`.
+
 ## [0.8.5] - 2026-07-21
 
 ### Added

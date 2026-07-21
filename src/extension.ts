@@ -1338,6 +1338,9 @@ async function executeStatement(stmt: QueryStatement, statements: QueryStatement
         if (stmt.transactText) {
             return await executeTransaction(dbPath, stmt.transactText);
         }
+        if (stmt.solveText) {
+            return await executeSolve(dbPath, stmt);
+        }
         if (stmt.queryText) {
             return await executeDatalogQuery(dbPath, stmt.queryText, stmt.limit ?? 50, stmt.text, {
                 rules: stmt.rulesText ? parseRulesSpec(stmt.rulesText) : undefined,
@@ -1345,7 +1348,7 @@ async function executeStatement(stmt: QueryStatement, statements: QueryStatement
             });
         }
 
-        vscode.window.showErrorMessage('Must specify either :query or :transact');
+        vscode.window.showErrorMessage('Must specify either :query, :transact, or :solve');
         return false;
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to execute: ${error}`);
@@ -1395,6 +1398,37 @@ async function executeTransaction(dbPath: string, txData: string): Promise<boole
             vscode.window.showErrorMessage(`Transaction failed: ${formatQueryError(result.error || '').summary}`);
             return false;
         }
+    });
+}
+
+async function executeSolve(dbPath: string, stmt: QueryStatement): Promise<boolean> {
+    return vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'Solving...',
+        cancellable: false
+    }, async () => {
+        const result = await dtlvBridge.solve(dbPath, {
+            solveText: stmt.solveText!,
+            pickText: stmt.pickText,
+            suchThatText: stmt.suchThatText,
+            limit: stmt.limit
+        });
+
+        if (!resultsPanel) {
+            resultsPanel = new ResultsPanel(dtlvBridge);
+        }
+
+        if (result.success) {
+            queryHistoryProvider.addQuery(stmt.text);
+            const data = result.data as { findVars?: string[] };
+            const syntheticQuery = `[:find ?solution ${(data?.findVars ?? []).join(' ')} :where]`;
+            resultsPanel.show(result.data, dbPath, syntheticQuery);
+            return true;
+        }
+
+        resultsPanel.showError(result.error || 'Unknown error', dbPath, stmt.text);
+        vscode.window.showErrorMessage(`Solve failed: ${formatQueryError(result.error || '').summary}`);
+        return false;
     });
 }
 

@@ -58,6 +58,9 @@ export class QueryCompletionProvider implements vscode.CompletionItemProvider {
             { name: 'db/id', detail: 'Entity ID attribute', snippet: 'db/id' },
             { name: 'db/ident', detail: 'Ident attribute', snippet: 'db/ident' },
             { name: 'vec-neighbors', detail: 'Vector similarity search function', snippet: 'vec-neighbors' },
+            { name: 'solve', detail: 'Pick rows under constraints', snippet: 'solve [:find $0 :where ]' },
+            { name: 'pick', detail: 'How many rows a :solve chooses', snippet: 'pick ${1:3}' },
+            { name: 'such-that', detail: 'Constraints for :solve ([:distinct ?v], [(< (sum ?v) n)])', snippet: 'such-that [$0]' },
         ];
 
         return keywords.map(kw => {

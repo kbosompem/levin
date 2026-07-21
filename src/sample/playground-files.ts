@@ -255,6 +255,10 @@ export function playgroundFiles(dbPath: string): PlaygroundFile[] {
         {
             name: '06-charts.dtlvnb',
             content: chartsNotebook(dbPath)
+        },
+        {
+            name: '07-solve.dtlvnb',
+            content: solveNotebook(dbPath)
         }
     ];
 }
@@ -331,6 +335,64 @@ function chartsNotebook(dbPath: string): string {
                            :y {:field "price" :type "quantitative" :title "Unit price"}
                            :tooltip {:field "name" :type "nominal"}}}}
  :limit 50}`)
+    ];
+
+    return JSON.stringify({
+        cells,
+        metadata: {
+            levin: {},
+            kernelspec: { name: 'levin', display_name: 'Levin (Datalevin)', language: 'clojure' },
+            language_info: { name: 'clojure' }
+        },
+        nbformat: 4,
+        nbformat_minor: 5
+    }, null, 1) + '\n';
+}
+
+/**
+ * The solve demo notebook: queries find what IS, :solve finds what COULD BE -
+ * pick rows under constraints, a job datalog alone cannot express.
+ */
+function solveNotebook(dbPath: string): string {
+    const cells: NotebookCell[] = [
+        mdCell('# Solve\n\nQueries answer *"what is true?"*. A `:solve` statement answers *"what could be?"* - it runs a query, then **picks** a set of rows satisfying **constraints**. Below: build a gift bundle of 3 products, every one from a different category, for under $50 total.'),
+
+        codeCell(`{:db "${dbPath}"
+ :solve [:find ?name ?price ?cat
+         :where
+         [?p :product/name ?name]
+         [?p :product/unit-price ?price]
+         [?p :product/category ?c]
+         [?c :category/name ?cat]]
+ :pick 3
+ :such-that [[:distinct ?cat]
+             [(< (sum ?price) 50.0)]]
+ :limit 5}`),
+
+        mdCell('Each row of the output is one picked product; the `?solution` column groups them into bundles. Try tightening the budget to `40.0`, or `:pick 4`.\n\n## Same, not different\n\nConstraints compose: `[:same ?country]` forces every pick from one country, bare `?price` applies per row, and `gap` bounds the spread - on this catalog exactly one trio qualifies:'),
+
+        codeCell(`{:solve [:find ?name ?price ?country
+         :where
+         [?p :product/name ?name]
+         [?p :product/unit-price ?price]
+         [?p :product/supplier ?s]
+         [?s :supplier/country ?country]]
+ :pick 3
+ :such-that [[:same ?country]
+             [(< ?price 25.0)]
+             [(<= (gap ?price) 10.0)]]
+ :limit 3}`),
+
+        mdCell(`## The vocabulary
+
+| constraint | meaning |
+|---|---|
+| \`[:distinct ?v]\` | picked values of \`?v\` all differ |
+| \`[:same ?v]\` | picked values of \`?v\` all equal |
+| \`[(< (sum ?v) n)]\` | predicate over an aggregate: \`sum\` \`max\` \`min\` \`avg\` \`gap\` \`count\` |
+| \`[(< ?v n)]\` | bare \`?v\`: predicate must hold for every picked row |
+
+Predicates: \`<\` \`<=\` \`>\` \`>=\` \`=\` \`not=\`. \`:limit\` caps how many solutions you get back (default 5). An empty result means no pick satisfies the constraints - itself an answer.`)
     ];
 
     return JSON.stringify({

@@ -1057,6 +1057,91 @@ export class DtlvBridge {
     }
 
     /**
+     * Execute a :solve statement: run the query, then pick `pick` rows
+     * satisfying every :such-that constraint. Declarative constraints:
+     *   [:distinct ?v]          picked values of ?v all differ
+     *   [:same ?v]              picked values of ?v all equal
+     *   [(< (sum ?v) 30)]       predicate over aggregates: sum/max/min/avg/gap/count
+     *   [(< ?v 20)]             bare ?v = predicate applies to every picked row
+     * Returns {:total :truncated :find-vars :results} where each result row is
+     * [solution-number & row], so existing table rendering works unchanged.
+     */
+    async solve(dbPath: string, stmt: {
+        solveText: string; pickText?: string; suchThatText?: string; limit?: number;
+    }): Promise<QueryResult> {
+        const pick = parseInt(stmt.pickText ?? '', 10);
+        if (isNaN(pick) || pick < 1) {
+            return { success: false, error: 'A :solve statement needs :pick <n> (how many rows to choose).' };
+        }
+        const limit = stmt.limit ?? 5;
+        const constraints = stmt.suchThatText ?? '[]';
+
+        const code = `
+            (let [q '${stmt.solveText}
+                  cs '${constraints}
+                  pick ${pick}
+                  lim ${limit}
+                  fvars (vec (take-while symbol? (rest q)))
+                  rows (vec (datalevin.core/q q @conn))
+                  _ (when (> (count rows) 400)
+                      (throw (ex-info (str "Too many candidates for :solve (" (count rows)
+                                           "); narrow the query with :where clauses") {})))
+                  col (zipmap fvars (range))
+                  pvar? (fn [x] (and (symbol? x) (clojure.string/starts-with? (name x) "?")))
+                  vals-of (fn [sel v]
+                            (if-not (contains? col v)
+                              (throw (ex-info (str "Unknown variable " v " in :such-that") {}))
+                              (mapv #(nth % (col v)) sel)))
+                  agg (fn [sel [f v]]
+                        (case f
+                          sum   (reduce + (vals-of sel v))
+                          max   (apply max (vals-of sel v))
+                          min   (apply min (vals-of sel v))
+                          avg   (/ (reduce + (vals-of sel v)) (double (count sel)))
+                          gap   (- (apply max (vals-of sel v)) (apply min (vals-of sel v)))
+                          count (count sel)
+                          (throw (ex-info (str "Unknown aggregate " f " (use sum/max/min/avg/gap/count)") {}))))
+                  ops {'< < '<= <= '> > '>= >= '= = 'not= not=}
+                  ok? (fn [sel c]
+                        (cond
+                          (= :distinct (first c)) (apply distinct? (vals-of sel (second c)))
+                          (= :same (first c))     (apply = (vals-of sel (second c)))
+                          (seq? (first c))
+                          (let [[op & args] (first c)
+                                f (or (ops op)
+                                      (throw (ex-info (str "Unknown predicate " op " (use < <= > >= = not=)") {})))]
+                            (if (some pvar? args)
+                              (every? (fn [row]
+                                        (apply f (map #(cond (pvar? %) (nth row (col %))
+                                                             (seq? %) (agg sel %)
+                                                             :else %)
+                                                      args)))
+                                      sel)
+                              (apply f (map #(if (seq? %) (agg sel %) %) args))))
+                          :else (throw (ex-info (str "Unknown constraint " (pr-str c)) {}))))
+                  combos (fn combos [start k]
+                           (if (zero? k)
+                             '(())
+                             (for [i (range start (count rows))
+                                   t (combos (inc i) (dec k))]
+                               (cons i t))))
+                  sols (->> (combos 0 pick)
+                            (map (fn [is] (mapv rows is)))
+                            (filter (fn [sel] (every? #(ok? sel %) cs)))
+                            (take (inc lim)))
+                  shown (vec (take lim sols))]
+              {:total (count shown)
+               :truncated (> (count sols) lim)
+               :findVars (mapv name fvars)
+               :results (vec (for [[i sel] (map-indexed vector shown)
+                                   row sel]
+                               (into [(inc i)] row)))})
+        `.trim();
+
+        return this.runCode(dbPath, code);
+    }
+
+    /**
      * Run code with a database connection
      * This wraps the code with connection setup/teardown
      */
