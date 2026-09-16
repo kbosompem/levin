@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as os from 'os';
 import * as path from 'path';
 import { DtlvBridge, VectorOpts } from './dtlv-bridge';
+import { registerLevinLmTools } from './agent-tools/lm-tools';
 import { DatabaseTreeProvider, DatabaseTreeItem } from './providers/tree-provider';
 import { QueryCompletionProvider } from './providers/completion-provider';
 import { QueryCodeLensProvider } from './providers/codelens-provider';
@@ -164,6 +165,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             }
         })
     );
+
+    // Agent tools (issue #21): expose Levin to in-editor AI agents via
+    // vscode.lm. Read-only unless levin.agentTools.allowWrites is set.
+    // Guarded for older VS Code builds that lack the LM tools API.
+    try {
+        const lm = (vscode as unknown as { lm?: { registerTool?: unknown } }).lm;
+        if (lm && typeof lm.registerTool === 'function') {
+            context.subscriptions.push(...registerLevinLmTools(dtlvBridge, outputChannel));
+        } else {
+            outputChannel.appendLine('[levin] vscode.lm.registerTool not available — language model tools skipped');
+        }
+    } catch (err) {
+        outputChannel.appendLine(`[levin] language model tool registration failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
         outputChannel.appendLine('Levin extension activated successfully');
         console.log('Levin extension activated successfully');

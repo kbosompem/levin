@@ -22,7 +22,7 @@
     "theme": "dark"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.90.0"
   },
   "categories": [
     "Data Science",
@@ -627,6 +627,42 @@
           "type": "array",
           "default": [],
           "description": "Recently opened database paths"
+        },
+        "levin.agentTools.databases": {
+          "type": "array",
+          "default": [],
+          "markdownDescription": "Databases AI agents may open via Levin tools (MCP server and VS Code language model tools). Each entry: `{\"name\": \"main\", \"path\": \"/data/mydb\"}`. This is the path allowlist — agents cannot open anything else.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          }
+        },
+        "levin.agentTools.allowWrites": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Allow AI agents to write via Levin tools (`transact`, `add_schema`, `create_database`). Off by default — read-only unless you opt in."
+        },
+        "levin.agentTools.maxRows": {
+          "type": "integer",
+          "default": 100,
+          "minimum": 1,
+          "markdownDescription": "Maximum rows returned per agent tool call."
+        },
+        "levin.agentTools.timeoutMs": {
+          "type": "integer",
+          "default": 30000,
+          "minimum": 1000,
+          "markdownDescription": "Per-call timeout in milliseconds for agent tools."
         }
       }
     },
@@ -635,7 +671,129 @@
         "editor.formatOnSave": false,
         "editor.defaultFormatter": "kaybosompem.levin"
       }
-    }
+    },
+    "languageModelTools": [
+      {
+        "name": "levin_list_databases",
+        "displayName": "Levin: List configured Datalevin databases",
+        "modelDescription": "Levin Datalevin tool: list configured datalevin databases",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "canBeReferencedInPrompt": true
+      },
+      {
+        "name": "levin_get_schema",
+        "displayName": "Levin: Get a database schema: attributes, types, cardinality",
+        "modelDescription": "Levin Datalevin tool: get a database schema: attributes, types, cardinality",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "canBeReferencedInPrompt": true
+      },
+      {
+        "name": "levin_describe_database",
+        "displayName": "Levin: Describe a database: datom count and entity counts",
+        "modelDescription": "Levin Datalevin tool: describe a database: datom count and entity counts",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "canBeReferencedInPrompt": true
+      },
+      {
+        "name": "levin_query",
+        "displayName": "Levin: Run a Datalog query and get rows back",
+        "modelDescription": "Levin Datalevin tool: run a datalog query and get rows back",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "canBeReferencedInPrompt": true
+      },
+      {
+        "name": "levin_get_entity",
+        "displayName": "Levin: Pull one entity by id with ref previews",
+        "modelDescription": "Levin Datalevin tool: pull one entity by id with ref previews",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "canBeReferencedInPrompt": true
+      },
+      {
+        "name": "levin_sample_values",
+        "displayName": "Levin: Sample distinct values of one attribute",
+        "modelDescription": "Levin Datalevin tool: sample distinct values of one attribute",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "canBeReferencedInPrompt": true
+      },
+      {
+        "name": "levin_list_rules",
+        "displayName": "Levin: List stored Datalog rules",
+        "modelDescription": "Levin Datalevin tool: list stored datalog rules",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "canBeReferencedInPrompt": true
+      },
+      {
+        "name": "levin_find_relationships",
+        "displayName": "Levin: Discover ref attributes and their targets",
+        "modelDescription": "Levin Datalevin tool: discover ref attributes and their targets",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "canBeReferencedInPrompt": true
+      },
+      {
+        "name": "levin_fulltext_search",
+        "displayName": "Levin: Full-text search over a fulltext-indexed attribute",
+        "modelDescription": "Levin Datalevin tool: full-text search over a fulltext-indexed attribute",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "canBeReferencedInPrompt": true
+      },
+      {
+        "name": "levin_transact",
+        "displayName": "Levin: Write datoms (requires writes enabled)",
+        "modelDescription": "Levin Datalevin tool: write datoms (requires writes enabled)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "canBeReferencedInPrompt": true
+      },
+      {
+        "name": "levin_add_schema",
+        "displayName": "Levin: Add a schema attribute (requires writes enabled)",
+        "modelDescription": "Levin Datalevin tool: add a schema attribute (requires writes enabled)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "canBeReferencedInPrompt": true
+      },
+      {
+        "name": "levin_create_database",
+        "displayName": "Levin: Create a new database (requires writes enabled)",
+        "modelDescription": "Levin Datalevin tool: create a new database (requires writes enabled)",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        },
+        "canBeReferencedInPrompt": true
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -653,7 +811,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.6",
     "@types/node": "^20.10.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.138.0",
     "@typescript-eslint/eslint-plugin": "^6.13.0",
     "@typescript-eslint/parser": "^6.13.0",
     "@vscode/test-electron": "^2.3.8",
@@ -666,6 +824,10 @@
     "vega-embed": "^7.1.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "edn-data": "^1.1.2"
+  },
+  "bin": {
+    "levin-mcp-server": "./out/agent-tools/mcp-server.js"
   }
 }
